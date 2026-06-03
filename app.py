@@ -520,14 +520,25 @@ def chart_specialty(m):
 # ── Auto-load credentials from Streamlit Secrets or fallback to local JSON
 def get_credentials():
     """Load credentials from Streamlit Secrets (deployed) or local file (dev)."""
-    # Priority 1: Streamlit Cloud Secrets
-    if "gcp_service_account" in st.secrets:
-        return dict(st.secrets["gcp_service_account"])
-    # Priority 2: local credentials.json in same folder
-    local_path = os.path.join(os.path.dirname(__file__), "credentials.json")
+    # Priority 1: Streamlit Cloud Secrets (safe check — won't crash if file missing)
+    try:
+        if "gcp_service_account" in st.secrets:
+            return dict(st.secrets["gcp_service_account"])
+    except Exception:
+        pass  # No secrets.toml locally — that's fine, try next option
+
+    # Priority 2: local credentials.json in same folder as app.py
+    local_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "credentials.json")
     if os.path.exists(local_path):
         with open(local_path, "r", encoding="utf-8-sig") as f:
             return json.load(f)
+
+    # Priority 3: credentials.json in current working directory
+    cwd_path = os.path.join(os.getcwd(), "credentials.json")
+    if os.path.exists(cwd_path):
+        with open(cwd_path, "r", encoding="utf-8-sig") as f:
+            return json.load(f)
+
     return None
 
 creds_data = get_credentials()
@@ -591,26 +602,33 @@ def do_fetch():
         st.session_state.err     = f"❌ {type(e).__name__}: {e}"
         st.session_state.metrics = None
 
-# ── AUTO REFRESH ──────────────────────────────
-now_ts = datetime.now().timestamp()
-time_since = now_ts - st.session_state.last_auto
-should_auto = (
-    auto_refresh
-    and creds_data is not None
-    and time_since >= refresh_interval
-)
+# ── INITIAL LOAD — fetch once on first run ─────
+if st.session_state.metrics is None and st.session_state.err is None:
+    with st.spinner("Đang tải dữ liệu lần đầu…"):
+        do_fetch()
 
-if fetch_btn or should_auto or st.session_state.metrics is None:
+# ── MANUAL REFRESH ─────────────────────────────
+if fetch_btn:
     with st.spinner("Đang tải dữ liệu…"):
         do_fetch()
 
-# Schedule next rerun for auto-refresh
-if auto_refresh and creds_data:
-    remaining = max(1, int(refresh_interval - (datetime.now().timestamp() - st.session_state.last_auto)))
+# ── AUTO REFRESH using st.fragment rerun ───────
+now_ts = datetime.now().timestamp()
+time_since = now_ts - st.session_state.last_auto
+if auto_refresh and creds_data and time_since >= refresh_interval and not fetch_btn:
+    with st.spinner("Đang tự động cập nhật…"):
+        do_fetch()
+
+# Show countdown in sidebar (no sleep, no blocking rerun)
+if auto_refresh and creds_data and st.session_state.metrics is not None:
+    elapsed   = int(datetime.now().timestamp() - st.session_state.last_auto)
+    remaining = max(0, refresh_interval - elapsed)
     st.sidebar.caption(f"🔁 Làm mới lại sau {remaining}s")
-    import time
-    time.sleep(1)
-    st.rerun()
+    # Use meta-refresh via query params trick to trigger rerun after interval
+    st.markdown(
+        f'<meta http-equiv="refresh" content="{refresh_interval}">',
+        unsafe_allow_html=True,
+    )
 
 # ── HEADER ────────────────────────────────────
 fetch_ts = st.session_state.fetch_time or "Chưa tải"
