@@ -517,6 +517,21 @@ def chart_specialty(m):
 
 
 # ── SIDEBAR ───────────────────────────────────
+# ── Auto-load credentials from Streamlit Secrets or fallback to local JSON
+def get_credentials():
+    """Load credentials from Streamlit Secrets (deployed) or local file (dev)."""
+    # Priority 1: Streamlit Cloud Secrets
+    if "gcp_service_account" in st.secrets:
+        return dict(st.secrets["gcp_service_account"])
+    # Priority 2: local credentials.json in same folder
+    local_path = os.path.join(os.path.dirname(__file__), "credentials.json")
+    if os.path.exists(local_path):
+        with open(local_path, "r", encoding="utf-8-sig") as f:
+            return json.load(f)
+    return None
+
+creds_data = get_credentials()
+
 with st.sidebar:
     st.markdown("""
     <div class="sidebar-logo">
@@ -526,67 +541,76 @@ with st.sidebar:
     </div>
     """, unsafe_allow_html=True)
 
-    st.markdown("**🔑 Xác thực Google**")
-    cred_mode = st.radio("", ["Upload file JSON", "Dán nội dung JSON"],
-                         label_visibility="collapsed")
-
-    creds_data = None
-    if cred_mode == "Upload file JSON":
-        ufile = st.file_uploader("Chọn Service Account JSON", type="json")
-        if ufile:
-            try:
-                creds_data = json.loads(ufile.read().decode("utf-8-sig").strip())
-                st.success("✓ File hợp lệ")
-            except Exception as e:
-                st.error(f"✗ Lỗi đọc file: {e}")
+    # Show credentials status
+    if creds_data:
+        st.success("🔒 Đã kết nối Google API")
     else:
-        jtext = st.text_area("Dán JSON vào đây", height=110,
-                              placeholder='{"type": "service_account", ...}')
-        if jtext.strip():
-            try:
-                creds_data = json.loads(jtext)
-                st.success("✓ JSON hợp lệ")
-            except:
-                st.error("✗ JSON không hợp lệ")
+        st.error("⚠️ Chưa có credentials")
+        st.markdown("Thêm `gcp_service_account` vào Streamlit Secrets hoặc đặt file `credentials.json` cùng thư mục.")
 
     st.markdown("---")
-    fetch_btn = st.button("🔄  Tải & Cập nhật dữ liệu")
+
+    # Auto-refresh selector
+    st.markdown("**⚡ Tự động cập nhật**")
+    refresh_interval = st.selectbox(
+        "Làm mới mỗi:",
+        [30, 60, 120, 300, 600],
+        index=1,
+        format_func=lambda x: f"{x} giây" if x < 60 else f"{x//60} phút",
+        label_visibility="collapsed",
+    )
+    auto_refresh = st.toggle("Bật tự động làm mới", value=True)
+
+    st.markdown("---")
+    fetch_btn = st.button("🔄  Tải ngay")
 
     st.markdown("---")
     st.markdown("**📋 Sheet đang dùng**")
     st.code(f"ID: ...{SHEET_ID[-12:]}\nTab: {SHEET_NAME[:24]}", language=None)
 
-    with st.expander("📖 Hướng dẫn cài đặt"):
-        st.markdown("""
-1. [console.cloud.google.com](https://console.cloud.google.com)
-2. Bật **Sheets API** + **Drive API**
-3. Tạo **Service Account** → Tải JSON key
-4. Chia sẻ Sheet với `client_email`
-5. Upload JSON → Nhấn **Tải dữ liệu**
-        """)
-
 
 # ── SESSION STATE ─────────────────────────────
-for k, v in [("metrics", None), ("fetch_time", None), ("err", None)]:
+for k, v in [("metrics", None), ("fetch_time", None), ("err", None), ("last_auto", 0)]:
     if k not in st.session_state:
         st.session_state[k] = v
 
-# ── FETCH ─────────────────────────────────────
-if fetch_btn:
+def do_fetch():
+    """Fetch and process data from Google Sheets."""
     if not creds_data:
-        st.session_state.err = "⚠️ Chưa có credentials. Vui lòng upload file JSON ở sidebar."
+        st.session_state.err = "⚠️ Chưa có credentials. Thêm vào Streamlit Secrets."
         st.session_state.metrics = None
-    else:
-        with st.spinner("Đang kết nối Google Sheets…"):
-            try:
-                cl  = authenticate_gspread(creds_data)
-                raw = fetch_data(cl, SHEET_ID, SHEET_NAME)
-                st.session_state.metrics   = process_data(raw)
-                st.session_state.fetch_time = datetime.now().strftime("%H:%M — %d/%m/%Y")
-                st.session_state.err       = None
-            except Exception as e:
-                st.session_state.err     = f"❌ {type(e).__name__}: {e}"
-                st.session_state.metrics = None
+        return
+    try:
+        cl  = authenticate_gspread(creds_data)
+        raw = fetch_data(cl, SHEET_ID, SHEET_NAME)
+        st.session_state.metrics    = process_data(raw)
+        st.session_state.fetch_time = datetime.now().strftime("%H:%M:%S — %d/%m/%Y")
+        st.session_state.last_auto  = datetime.now().timestamp()
+        st.session_state.err        = None
+    except Exception as e:
+        st.session_state.err     = f"❌ {type(e).__name__}: {e}"
+        st.session_state.metrics = None
+
+# ── AUTO REFRESH ──────────────────────────────
+now_ts = datetime.now().timestamp()
+time_since = now_ts - st.session_state.last_auto
+should_auto = (
+    auto_refresh
+    and creds_data is not None
+    and time_since >= refresh_interval
+)
+
+if fetch_btn or should_auto or st.session_state.metrics is None:
+    with st.spinner("Đang tải dữ liệu…"):
+        do_fetch()
+
+# Schedule next rerun for auto-refresh
+if auto_refresh and creds_data:
+    remaining = max(1, int(refresh_interval - (datetime.now().timestamp() - st.session_state.last_auto)))
+    st.sidebar.caption(f"🔁 Làm mới lại sau {remaining}s")
+    import time
+    time.sleep(1)
+    st.rerun()
 
 # ── HEADER ────────────────────────────────────
 fetch_ts = st.session_state.fetch_time or "Chưa tải"
