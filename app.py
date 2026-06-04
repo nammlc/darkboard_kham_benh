@@ -1,5 +1,5 @@
 """
-Dashboard Đăng Ký Khám Online — BVĐK Tâm Đức Cầu Quan
+Hệ Thống Theo Dõi Đặt Khám Trực Tuyến — BVĐK Tâm Đức Cầu Quan
 Fully responsive: PC + Mobile
 """
 
@@ -32,7 +32,7 @@ SCOPES = [
 
 # ── PAGE CONFIG ───────────────────────────────
 st.set_page_config(
-    page_title="Dashboard · Tâm Đức Cầu Quan",
+    page_title="Theo Dõi Đặt Khám · BVĐK Tâm Đức",
     page_icon="🏥",
     layout="wide",
     initial_sidebar_state="collapsed",   # collapsed by default = better on mobile
@@ -82,6 +82,35 @@ section[data-testid="stSidebar"] h1,
 section[data-testid="stSidebar"] h2,
 section[data-testid="stSidebar"] h3 { color: #e0f0ff !important; }
 section[data-testid="stSidebar"] hr { border-color: #1e3a5f !important; }
+
+/* ══ SIDEBAR TOGGLE BUTTON — highly visible ══ */
+[data-testid="stSidebarCollapsedControl"] {
+    top: 0.8rem !important;
+    background: #1e3a5f !important;
+    border: 2px solid #3b82f6 !important;
+    border-radius: 12px !important;
+    box-shadow: 0 4px 20px rgba(59,130,246,0.5) !important;
+    padding: 0.25rem !important;
+}
+[data-testid="stSidebarCollapsedControl"] button {
+    background: transparent !important;
+    color: #93c5fd !important;
+}
+[data-testid="stSidebarCollapsedControl"] svg {
+    fill: #93c5fd !important;
+    width: 20px !important; height: 20px !important;
+}
+/* Expand/collapse arrow inside open sidebar */
+button[data-testid="baseButton-headerNoPadding"] {
+    background: rgba(59,130,246,0.15) !important;
+    border: 1.5px solid rgba(59,130,246,0.4) !important;
+    border-radius: 8px !important;
+    color: #93c5fd !important;
+}
+button[data-testid="baseButton-headerNoPadding"] svg {
+    fill: #93c5fd !important;
+    stroke: #93c5fd !important;
+}
 
 /* ══ BUTTON ══ */
 .stButton > button {
@@ -491,25 +520,18 @@ with st.sidebar:
     <div class="sb-logo">
       <div style="font-size:1.6rem;margin-bottom:0.3rem">🏥</div>
       <div class="sb-logo-title">BVĐK Tâm Đức Cầu Quan</div>
-      <div class="sb-logo-sub">Hệ thống theo dõi lịch hẹn</div>
+      <div class="sb-logo-sub">Hệ thống theo dõi đặt khám trực tuyến</div>
     </div>
     """, unsafe_allow_html=True)
 
     if creds_data:
         st.success("🔒 Google API: Đã kết nối")
     else:
-        st.error("⚠️ Chưa có credentials")
-        st.caption("Thêm `gcp_service_account` vào Streamlit Secrets.")
+        st.error("⚠️ Chưa có thông tin xác thực")
+        st.caption("Vui lòng thêm `gcp_service_account` vào Streamlit Secrets.")
 
     st.markdown("---")
-    st.markdown("**⚡ Tự động cập nhật**")
-    refresh_interval = st.selectbox("", [30, 60, 120, 300, 600], index=1,
-        format_func=lambda x: f"{x} giây" if x < 60 else f"{x//60} phút",
-        label_visibility="collapsed")
-    auto_refresh = st.toggle("Bật tự động làm mới", value=True)
-
-    st.markdown("---")
-    fetch_btn = st.button("🔄  Tải dữ liệu ngay")
+    fetch_btn = st.button("🔄  Làm mới dữ liệu", use_container_width=True)
 
     st.markdown("---")
     st.markdown("**📋 Nguồn dữ liệu**")
@@ -517,50 +539,37 @@ with st.sidebar:
 
 
 # ── SESSION STATE ─────────────────────────────
-for k, v in [("metrics", None), ("fetch_time", None), ("err", None), ("last_auto", 0)]:
+for k, v in [("metrics", None), ("fetch_time", None), ("err", None)]:
     if k not in st.session_state:
         st.session_state[k] = v
 
 
 def do_fetch():
+    """Kết nối Google Sheets và tải dữ liệu mới nhất."""
     if not creds_data:
-        st.session_state.err = "⚠️ Chưa có credentials."
+        st.session_state.err = "⚠️ Chưa có thông tin xác thực. Vui lòng kiểm tra Streamlit Secrets."
         st.session_state.metrics = None
         return
     try:
-        cl = authenticate_gspread(creds_data)
+        cl  = authenticate_gspread(creds_data)
         raw = fetch_data(cl, SHEET_ID, SHEET_NAME)
         st.session_state.metrics    = process_data(raw)
         st.session_state.fetch_time = datetime.now().strftime("%H:%M:%S · %d/%m/%Y")
-        st.session_state.last_auto  = datetime.now().timestamp()
         st.session_state.err        = None
     except Exception as e:
-        st.session_state.err     = f"❌ {type(e).__name__}: {e}"
+        st.session_state.err     = f"❌ Lỗi kết nối: {type(e).__name__}: {e}"
         st.session_state.metrics = None
 
 
-# Initial load
+# Tải dữ liệu tự động lần đầu khi mở app
 if st.session_state.metrics is None and st.session_state.err is None:
-    with st.spinner("Đang tải dữ liệu…"):
+    with st.spinner("Đang tải dữ liệu, vui lòng chờ…"):
         do_fetch()
 
+# Tải lại khi người dùng nhấn nút
 if fetch_btn:
-    with st.spinner("Đang tải dữ liệu…"):
+    with st.spinner("Đang làm mới dữ liệu…"):
         do_fetch()
-
-# Auto refresh
-now_ts = datetime.now().timestamp()
-if auto_refresh and creds_data and (now_ts - st.session_state.last_auto) >= refresh_interval and not fetch_btn:
-    with st.spinner("Đang cập nhật…"):
-        do_fetch()
-
-# Meta refresh (browser-level, no sleep)
-if auto_refresh and creds_data and st.session_state.metrics is not None:
-    elapsed   = int(datetime.now().timestamp() - st.session_state.last_auto)
-    remaining = max(0, refresh_interval - elapsed)
-    st.sidebar.caption(f"🔁 Cập nhật sau {remaining}s")
-    st.markdown(f'<meta http-equiv="refresh" content="{refresh_interval}">',
-                unsafe_allow_html=True)
 
 
 # ── HEADER ────────────────────────────────────
@@ -570,8 +579,8 @@ st.markdown(f"""
   <div class="app-header-left">
     <div class="app-header-emoji">🏥</div>
     <div>
-      <div class="app-header-title">Dashboard Đăng Ký Khám Online</div>
-      <div class="app-header-sub">BVĐK Tâm Đức Cầu Quan · Theo dõi lịch hẹn & tình trạng</div>
+      <div class="app-header-title">Hệ Thống Theo Dõi Đặt Khám Trực Tuyến</div>
+      <div class="app-header-sub">BVĐK Tâm Đức Cầu Quan · Theo dõi lịch hẹn và tình trạng khám bệnh</div>
     </div>
   </div>
   <div class="app-header-time">🕐 {fetch_ts}</div>
@@ -603,37 +612,37 @@ if st.session_state.metrics:
 
       <div class="kpi-card kc-blue">
         <div class="kpi-bg-icon">📋</div>
-        <div class="kpi-label">Tổng Đăng Ký</div>
+        <div class="kpi-label">Tổng Lượt Đặt Khám</div>
         <div class="kpi-num">{m['total']}</div>
-        <div class="kpi-sub">Toàn bộ lịch hẹn</div>
+        <div class="kpi-sub">Tổng số lịch hẹn đã đặt</div>
       </div>
 
       <div class="kpi-card kc-green">
         <div class="kpi-bg-icon">✅</div>
-        <div class="kpi-label">Đã Khám</div>
+        <div class="kpi-label">Đã Đến Khám</div>
         <div class="kpi-num">{m['attended_count']}</div>
-        <div class="kpi-sub">{m['attended_pct']}% tổng đăng ký</div>
+        <div class="kpi-sub">{m['attended_pct']}% tổng lượt đặt</div>
       </div>
 
       <div class="kpi-card kc-rose">
         <div class="kpi-bg-icon">❌</div>
         <div class="kpi-label">Chưa / Vắng</div>
         <div class="kpi-num">{m['noshow_count']}</div>
-        <div class="kpi-sub">{m['noshow_pct']}% tổng đăng ký</div>
+        <div class="kpi-sub">{m['noshow_pct']}% tổng lượt đặt</div>
       </div>
 
       <div class="kpi-card kc-violet">
         <div class="kpi-bg-icon">📅</div>
-        <div class="kpi-label">Số Ngày Khám</div>
+        <div class="kpi-label">Số Ngày Có Lịch</div>
         <div class="kpi-num">{unique_dates}</div>
-        <div class="kpi-sub">Ngày có lịch hẹn</div>
+        <div class="kpi-sub">Ngày có lịch hẹn khám</div>
       </div>
 
     </div>
     """, unsafe_allow_html=True)
 
     # ── Donut + Gender — stack on mobile, side-by-side on desktop ──
-    st.markdown(sec(C_GREEN, "Tỷ Lệ Đã Khám / Vắng Khám"), unsafe_allow_html=True)
+    st.markdown(sec(C_GREEN, "Tỷ Lệ Đã Đến Khám / Vắng Khám"), unsafe_allow_html=True)
     col1, col2 = st.columns([3, 2])
 
     with col1:
@@ -644,11 +653,11 @@ if st.session_state.metrics:
         <div class="legend-row">
           <div class="legend-item">
             <div class="legend-dot" style="background:{C_GREEN}"></div>
-            Đã khám — <b style="color:#0f172a">&nbsp;{m['attended_count']}</b>&nbsp;({m['attended_pct']}%)
+            Đã đến khám — <b style="color:#0f172a">&nbsp;{m['attended_count']}</b>&nbsp;({m['attended_pct']}%)
           </div>
           <div class="legend-item">
             <div class="legend-dot" style="background:{C_ROSE}"></div>
-            Chưa / Vắng — <b style="color:#0f172a">&nbsp;{m['noshow_count']}</b>&nbsp;({m['noshow_pct']}%)
+            Vắng / Chưa đến khám — <b style="color:#0f172a">&nbsp;{m['noshow_count']}</b>&nbsp;({m['noshow_pct']}%)
           </div>
         </div>
         """, unsafe_allow_html=True)
@@ -663,12 +672,12 @@ if st.session_state.metrics:
                             config={"displayModeBar": False})
             st.markdown('</div>', unsafe_allow_html=True)
         else:
-            st.info("Không có dữ liệu giới tính.")
+            st.info("Không có dữ liệu về giới tính bệnh nhân.")
 
     # ── Daily bookings ──
     fig_d = chart_daily(m)
     if fig_d:
-        st.markdown(sec(C_BLUE, "Lịch Hẹn Theo Ngày Khám"), unsafe_allow_html=True)
+        st.markdown(sec(C_BLUE, "Số Lượt Đặt Khám Theo Ngày"), unsafe_allow_html=True)
         st.markdown('<div class="chart-wrap">', unsafe_allow_html=True)
         st.plotly_chart(fig_d, use_container_width=True,
                         config={"displayModeBar": False})
@@ -677,7 +686,7 @@ if st.session_state.metrics:
     # ── Specialty ──
     fig_s = chart_specialty(m)
     if fig_s:
-        st.markdown(sec(C_VIOLET, "Chuyên Khoa Được Đăng Ký Nhiều Nhất"),
+        st.markdown(sec(C_VIOLET, "Chuyên Khoa Được Đặt Khám Nhiều Nhất"),
                     unsafe_allow_html=True)
         st.markdown('<div class="chart-wrap">', unsafe_allow_html=True)
         st.plotly_chart(fig_s, use_container_width=True,
@@ -685,13 +694,13 @@ if st.session_state.metrics:
         st.markdown('</div>', unsafe_allow_html=True)
 
     # ── Status table ──
-    st.markdown(sec(C_AMBER, "Chi Tiết Trạng Thái"), unsafe_allow_html=True)
+    st.markdown(sec(C_AMBER, "Thống Kê Chi Tiết Theo Trạng Thái"), unsafe_allow_html=True)
     if m["status_tbl"] is not None:
         st.dataframe(m["status_tbl"], use_container_width=True,
                      hide_index=True, height=150)
 
     # ── Raw data ──
-    with st.expander("📄 Xem dữ liệu thô"):
+    with st.expander("📄 Xem Dữ Liệu Chi Tiết Bệnh Nhân"):
         show_cols = [c for c in [COL_TIMESTAMP, COL_NAME, COL_EXAM_DATE,
                                   COL_STATUS, COL_SPECIALTY, COL_GENDER]
                      if c in m["df"].columns]
@@ -703,9 +712,9 @@ else:
         st.markdown("""
         <div class="empty-wrap">
           <div class="empty-icon">🏥</div>
-          <div class="empty-title">Đang tải dữ liệu...</div>
+          <div class="empty-title">Đang tải dữ liệu, vui lòng chờ...</div>
           <div class="empty-desc">
-            Nếu không thấy dữ liệu, hãy nhấn <strong>🔄 Tải dữ liệu ngay</strong> trong sidebar.
+            Nếu dữ liệu không hiển thị, vui lòng nhấn nút <strong>🔄 Làm mới dữ liệu</strong> ở thanh điều hướng bên trái.
           </div>
         </div>
         """, unsafe_allow_html=True)
