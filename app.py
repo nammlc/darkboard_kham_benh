@@ -513,6 +513,8 @@ def process_data(df):
                 status_tbl=status_tbl, df=df)
 
 def _empty(df):
+    df = df.copy()
+    df["_date"] = pd.NaT   # always ensure _date column exists
     return dict(total=0, att=0, nos=0, att_pct=0.0, nos_pct=0.0,
                 spec=None, gen=None, daily=None, status_tbl=None, df=df)
 
@@ -521,6 +523,8 @@ def _empty(df):
 
 def build_stats(df, period):
     """Build time-series stats grouped by period."""
+    if "_date" not in df.columns:
+        return None
     date_ok = df["_date"].notna()
     if not date_ok.any():
         return None
@@ -645,7 +649,10 @@ if st.session_state.metrics:
     # TAB 1 — TỔNG QUAN
     # ════════════════════════════════════════════
     with tab1:
-        unique_dates = df["_date"].notna().sum() and df["_date"].dropna().dt.date.nunique()
+        if "_date" in df.columns and df["_date"].notna().any():
+            unique_dates = int(df["_date"].dropna().dt.date.nunique())
+        else:
+            unique_dates = 0
 
         st.markdown(f"""
         <div class="kpi-grid">
