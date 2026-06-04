@@ -83,33 +83,62 @@ section[data-testid="stSidebar"] h2,
 section[data-testid="stSidebar"] h3 { color: #e0f0ff !important; }
 section[data-testid="stSidebar"] hr { border-color: #1e3a5f !important; }
 
-/* ══ SIDEBAR TOGGLE BUTTON — highly visible ══ */
+/* ══ SIDEBAR TOGGLE — maximum visibility ══ */
+
+/* The floating pill shown when sidebar is CLOSED */
 [data-testid="stSidebarCollapsedControl"] {
-    top: 0.8rem !important;
-    background: #1e3a5f !important;
-    border: 2px solid #3b82f6 !important;
-    border-radius: 12px !important;
-    box-shadow: 0 4px 20px rgba(59,130,246,0.5) !important;
-    padding: 0.25rem !important;
+    position: fixed !important;
+    top: 0.6rem !important;
+    left: 0.4rem !important;
+    z-index: 999999 !important;
+    background: #2563eb !important;
+    border: none !important;
+    border-radius: 50px !important;
+    box-shadow: 0 4px 24px rgba(37,99,235,0.7), 0 0 0 3px rgba(37,99,235,0.2) !important;
+    padding: 0.3rem 0.7rem !important;
+    display: flex !important;
+    align-items: center !important;
+    gap: 0.3rem !important;
+    min-width: 80px !important;
+}
+[data-testid="stSidebarCollapsedControl"]::before {
+    content: "☰ Menu" !important;
+    color: white !important;
+    font-size: 0.78rem !important;
+    font-weight: 700 !important;
+    font-family: Inter, sans-serif !important;
+    letter-spacing: 0.04em !important;
 }
 [data-testid="stSidebarCollapsedControl"] button {
     background: transparent !important;
-    color: #93c5fd !important;
+    border: none !important;
+    padding: 0 !important;
 }
 [data-testid="stSidebarCollapsedControl"] svg {
-    fill: #93c5fd !important;
-    width: 20px !important; height: 20px !important;
+    fill: white !important;
+    width: 16px !important;
+    height: 16px !important;
 }
-/* Expand/collapse arrow inside open sidebar */
+
+/* Arrow button INSIDE the open sidebar */
 button[data-testid="baseButton-headerNoPadding"] {
-    background: rgba(59,130,246,0.15) !important;
-    border: 1.5px solid rgba(59,130,246,0.4) !important;
+    background: rgba(37,99,235,0.25) !important;
+    border: 1.5px solid rgba(96,165,250,0.6) !important;
     border-radius: 8px !important;
-    color: #93c5fd !important;
 }
 button[data-testid="baseButton-headerNoPadding"] svg {
     fill: #93c5fd !important;
     stroke: #93c5fd !important;
+}
+
+/* Pulse animation to draw attention on first load */
+@keyframes pulse-btn {
+    0%   { box-shadow: 0 4px 24px rgba(37,99,235,0.7), 0 0 0 0 rgba(37,99,235,0.4); }
+    70%  { box-shadow: 0 4px 24px rgba(37,99,235,0.7), 0 0 0 10px rgba(37,99,235,0); }
+    100% { box-shadow: 0 4px 24px rgba(37,99,235,0.7), 0 0 0 0 rgba(37,99,235,0); }
+}
+[data-testid="stSidebarCollapsedControl"] {
+    animation: pulse-btn 2s ease 1s 3 !important;
 }
 
 /* ══ BUTTON ══ */
@@ -304,9 +333,66 @@ button[data-testid="baseButton-headerNoPadding"] svg {
     div[data-testid="stHorizontalBlock"] > div { min-width: 0 !important; }
 }
 
-/* Dataframe rounded */
-div[data-testid="stDataFrame"] > div { border-radius: 12px; overflow: hidden; }
-div[data-testid="stExpander"] { border-radius: 12px !important; border: 1px solid #e2e8f0 !important; }
+/* ══ DATAFRAME — mobile readable ══ */
+div[data-testid="stDataFrame"] > div {
+    border-radius: 12px;
+    overflow: auto !important;
+    -webkit-overflow-scrolling: touch;
+}
+/* Make table text bigger on mobile */
+div[data-testid="stDataFrame"] table {
+    font-size: 0.82rem !important;
+    min-width: 500px;    /* force horizontal scroll rather than squish */
+}
+div[data-testid="stDataFrame"] th {
+    background: #1e3a5f !important;
+    color: #e0f0ff !important;
+    font-size: 0.75rem !important;
+    font-weight: 700 !important;
+    text-transform: uppercase !important;
+    letter-spacing: 0.05em !important;
+    padding: 0.6rem 0.8rem !important;
+    white-space: nowrap !important;
+}
+div[data-testid="stDataFrame"] td {
+    font-size: 0.8rem !important;
+    color: #1e293b !important;
+    padding: 0.5rem 0.8rem !important;
+    border-bottom: 1px solid #f1f5f9 !important;
+}
+div[data-testid="stDataFrame"] tr:nth-child(even) td {
+    background: #f8fafc !important;
+}
+div[data-testid="stDataFrame"] tr:hover td {
+    background: #eff6ff !important;
+}
+
+/* Expander — cleaner look */
+div[data-testid="stExpander"] {
+    border-radius: 14px !important;
+    border: 1px solid #e2e8f0 !important;
+    background: white !important;
+    overflow: hidden !important;
+}
+div[data-testid="stExpander"] summary {
+    font-weight: 600 !important;
+    font-size: 0.88rem !important;
+    color: #1e293b !important;
+    padding: 0.8rem 1rem !important;
+    background: white !important;
+}
+/* Scroll hint on mobile */
+@media (max-width: 768px) {
+    div[data-testid="stDataFrame"]::after {
+        content: "← Vuốt ngang để xem thêm →";
+        display: block;
+        text-align: center;
+        font-size: 0.7rem;
+        color: #94a3b8;
+        padding: 0.4rem 0 0.2rem;
+        font-style: italic;
+    }
+}
 </style>
 """, unsafe_allow_html=True)
 
