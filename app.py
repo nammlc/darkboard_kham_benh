@@ -577,18 +577,23 @@ def process(df):
         raise KeyError(f"Không thấy cột '{COL_STATUS}'. Hiện có: {list(df.columns)}")
     df = df.copy()
     df[COL_STATUS] = df[COL_STATUS].astype(str).str.strip()
-    df = df[~df[COL_STATUS].isin(["","nan","N/A","\u200b"])]
-    # parse date
+    # Parse ngày khám trên TOÀN BỘ dữ liệu — TRƯỚC khi lọc theo trạng thái —
+    # để tab "3 Ngày Tới" có thể nhắc lịch cho mọi bệnh nhân theo NGÀY KHÁM,
+    # không bị bỏ sót những bệnh nhân chưa được gán cột TRẠNG THÁI.
     if COL_EXAM_DATE in df.columns:
         df["_date"] = pd.to_datetime(
             df[COL_EXAM_DATE].astype(str).str.strip(), format="%d/%m/%Y", errors="coerce"
         )
     else:
         df["_date"] = pd.NaT
+
+    df_full = df.copy()  # bản ĐẦY ĐỦ, không lọc theo TRẠNG THÁI — dùng cho tab "3 Ngày Tới"
+
+    df = df[~df[COL_STATUS].isin(["","nan","N/A","\u200b"])]
     total = len(df)
     if total == 0:
         df["_date"] = pd.NaT
-        return _mk_empty(df)
+        return _mk_empty(df, df_full)
     att = int((df[COL_STATUS].str.upper()==STATUS_ATTENDED.upper()).sum())
     nos = total - att
 
@@ -618,13 +623,15 @@ def process(df):
     return dict(total=total,att=att,nos=nos,
                 att_pct=round(att/total*100,1),
                 nos_pct=round(nos/total*100,1),
-                spec=spec, gen=gen, stbl=stbl, df=df,
+                spec=spec, gen=gen, stbl=stbl, df=df, df_full=df_full,
                 src_noi=src_noi, src_vl=src_vl, src_other=src_other)
 
-def _mk_empty(df):
+def _mk_empty(df, df_full=None):
     df = df.copy(); df["_date"]=pd.NaT
+    if df_full is None:
+        df_full = df.copy()
     return dict(total=0,att=0,nos=0,att_pct=0.0,nos_pct=0.0,
-                spec=None,gen=None,stbl=None,df=df,
+                spec=None,gen=None,stbl=None,df=df,df_full=df_full,
                 src_noi=0,src_vl=0,src_other=0)
 
 def today_stats(df, today_date):
@@ -979,9 +986,13 @@ if st.session_state.metrics:
         upcoming_dates = [today + timedelta(days=i) for i in range(1, 4)]
         total_upcoming = 0
 
-        if "_date" in df.columns and df["_date"].notna().any():
+        # Dùng dữ liệu ĐẦY ĐỦ (không lọc theo cột TRẠNG THÁI) để không bỏ
+        # sót bệnh nhân chưa được gán trạng thái — phục vụ mục đích nhắc lịch khám.
+        df_upcoming = m.get("df_full", df)
+
+        if "_date" in df_upcoming.columns and df_upcoming["_date"].notna().any():
             for udate in upcoming_dates:
-                day_df = df[df["_date"].dt.date == udate].copy()
+                day_df = df_upcoming[df_upcoming["_date"].dt.date == udate].copy()
                 count  = len(day_df)
                 total_upcoming += count
 
@@ -1035,9 +1046,15 @@ if st.session_state.metrics:
                         else:
                             stat_style = "color:#475569"
 
-                        # Phone — mask middle digits for privacy
-                        if phone not in ("—","N/A","nan","") and len(phone) >= 8:
-                            phone_show = phone[:3] + "****" + phone[-3:]
+                        # Hiển thị ĐẦY ĐỦ số điện thoại (không che) để nhân viên
+                        # gọi trực tiếp cho bệnh nhân; thêm liên kết tel: để bấm gọi nhanh trên điện thoại.
+                        if phone not in ("—","N/A","nan",""):
+                            tel_digits = "".join(ch for ch in phone if ch.isdigit() or ch == "+")
+                            phone_show = (
+                                '<a href="tel:' + tel_digits + '" '
+                                'style="color:#1d4ed8;font-weight:700;text-decoration:none">'
+                                + phone + '</a>'
+                            )
                         else:
                             phone_show = phone
 
