@@ -1029,7 +1029,10 @@ if st.session_state.metrics:
                         phone = str(row2.get(COL_PHONE,"") or "—")
                         etime = str(row2.get(COL_EXAM_TIME,"") or "—")
                         spec  = str(row2.get(COL_SPECIALTY,"") or "—")
-                        src   = str(row2.get(COL_SOURCE,"") or "—")
+                        src_raw = str(row2.get(COL_SOURCE,"") or "")
+                        # Nhãn màu để phân biệt nguồn bệnh nhân (vd: Từ khoa/Tái khám vs Vãng lai)
+                        src_badge = source_badge(src_raw)
+                        src_show  = src_badge if src_badge else "—"
                         stat  = str(row2.get(COL_STATUS,"") or "—")
 
                         # Shorten time hh:mm:ss -> hh:mm
@@ -1065,7 +1068,7 @@ if st.session_state.metrics:
                             '<td>' + byr + '</td>'
                             '<td>' + phone_show + '</td>'
                             '<td style="max-width:140px;white-space:normal">' + spec + '</td>'
-                            '<td>' + src + '</td>'
+                            '<td>' + src_show + '</td>'
                             '<td style="' + stat_style + '">' + stat + '</td>'
                             '</tr>'
                         )
