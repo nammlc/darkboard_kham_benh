@@ -571,179 +571,240 @@ def authenticate_rw(src):
 
 def parse_minh_lo_excel(uploaded_file):
     """
-    Parse Minh Lo HIS Excel export (DANH SÁCH BỆNH NHÂN HẸN KHÁM LẠI).
-    Handles merged cells — one patient spans multiple rows.
-    Returns list of dicts with cleaned fields.
+    Parse Minh Lo HIS Excel export using direct XML parsing.
+    Robust against missing sharedStrings.xml (files with only numeric cells).
+    Handles merged cells via fill-down logic.
+    Returns (list_of_dicts, error_msg_or_None).
     """
-    import zipfile, xml.etree.ElementTree as ET
-    from openpyxl import load_workbook
-    from openpyxl.utils import get_column_letter
-    import math
+    import zipfile
+    import xml.etree.ElementTree as ET
+    import io
 
-    # Try openpyxl first (handles merged cells properly)
+    NS = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
+
+    def _tag(name):
+        return "{" + NS + "}" + name
+
     try:
-        wb = load_workbook(uploaded_file, data_only=True)
-        ws = wb.active
+        # Read file bytes (works for both Streamlit UploadedFile and file path)
+        if hasattr(uploaded_file, "read"):
+            raw = uploaded_file.read()
+        else:
+            with open(uploaded_file, "rb") as f:
+                raw = f.read()
 
-        # Unmerge by filling merged regions with their values
-        merged_ranges = list(ws.merged_cells.ranges)
-        for merge in merged_ranges:
-            min_row, min_col = merge.min_row, merge.min_col
-            top_val = ws.cell(min_row, min_col).value
-            ws.unmerge_cells(str(merge))
-            for row in ws.iter_rows(min_row=merge.min_row, max_row=merge.max_row,
-                                     min_col=merge.min_col, max_col=merge.max_col):
-                for cell in row:
-                    if cell.value is None:
-                        cell.value = top_val
+        zf = zipfile.ZipFile(io.BytesIO(raw))
+        names_lower = {n.lower(): n for n in zf.namelist()}
 
-        # Find header row (contains 'STT' and 'Mã y tế')
-        header_row = None
-        for i, row in enumerate(ws.iter_rows(values_only=True), 1):
-            row_vals = [str(v or '').strip() for v in row]
-            if 'STT' in row_vals and any('Mã' in v for v in row_vals):
-                header_row = i
+        # ── Shared strings (optional — some xlsx have none) ──
+        shared = []
+        ss_key = next((k for k in names_lower if "sharedstrings" in k), None)
+        if ss_key:
+            with zf.open(names_lower[ss_key]) as f:
+                tree = ET.parse(f)
+            for si in tree.findall(".//" + _tag("si")):
+                texts = [t.text or "" for t in si.findall(".//" + _tag("t"))]
+                shared.append("".join(texts))
+
+        # ── Worksheet ──
+        ws_key = next(
+            (k for k in names_lower if "worksheets/sheet1" in k or "worksheet/sheet1" in k),
+            None,
+        )
+        if ws_key is None:
+            # fallback: find any sheet
+            ws_key = next((k for k in names_lower if "worksheets/sheet" in k), None)
+        if ws_key is None:
+            return [], "Không tìm thấy worksheet trong file xlsx."
+
+        with zf.open(names_lower[ws_key]) as f:
+            ws_tree = ET.parse(f)
+
+        # ── Merged cells → build fill map {(row,col): (src_row,src_col)} ──
+        merge_fill = {}  # (r,c) → value to fill from top-left of merge
+        mc_el = ws_tree.find(".//" + _tag("mergeCells"))
+        if mc_el is not None:
+            for mc in mc_el.findall(_tag("mergeCell")):
+                ref = mc.get("ref", "")
+                if ":" not in ref:
+                    continue
+                p1, p2 = ref.split(":")
+                def col_num(s):
+                    s = "".join(ch for ch in s if ch.isalpha()).upper()
+                    n = 0
+                    for ch in s:
+                        n = n * 26 + (ord(ch) - 64)
+                    return n
+                def row_num(s):
+                    return int("".join(ch for ch in s if ch.isdigit()))
+                r1, c1 = row_num(p1), col_num(p1)
+                r2, c2 = row_num(p2), col_num(p2)
+                for r in range(r1, r2 + 1):
+                    for c in range(c1, c2 + 1):
+                        if r != r1 or c != c1:
+                            merge_fill[(r, c)] = (r1, c1)
+
+        # ── Read all cells into grid ──
+        grid = {}  # (row, col) → raw value
+        for row_el in ws_tree.findall(".//" + _tag("row")):
+            r = int(row_el.get("r", 0))
+            for cell_el in row_el.findall(_tag("c")):
+                ref = cell_el.get("r", "")
+                col_str = "".join(ch for ch in ref if ch.isalpha())
+                col_n = 0
+                for ch in col_str.upper():
+                    col_n = col_n * 26 + (ord(ch) - 64)
+                t   = cell_el.get("t", "")
+                v_el = cell_el.find(_tag("v"))
+                if v_el is None:
+                    val = ""
+                elif t == "s":
+                    idx2 = int(v_el.text or 0)
+                    val = shared[idx2] if idx2 < len(shared) else ""
+                elif t == "inlineStr":
+                    is_el = cell_el.find(_tag("is"))
+                    val = is_el.findtext(_tag("t"), "") if is_el is not None else ""
+                else:
+                    val = v_el.text or ""
+                grid[(r, col_n)] = val
+
+        # Apply merge fill
+        for (r, c), (sr, sc) in merge_fill.items():
+            if (sr, sc) in grid and (r, c) not in grid:
+                grid[(r, c)] = grid[(sr, sc)]
+
+        max_row = max(r for r, _ in grid) if grid else 0
+        max_col = max(c for _, c in grid) if grid else 0
+
+        def get_row(r):
+            return [grid.get((r, c), "") for c in range(1, max_col + 1)]
+
+        # ── Find header row (row with STT and Mã y tế) ──
+        header_row_idx = None
+        for r in range(1, min(max_row + 1, 15)):
+            row_vals = [str(v).strip() for v in get_row(r)]
+            has_stt = "STT" in row_vals
+            has_ma  = any("m" in v.lower() and "y t" in v.lower() for v in row_vals)
+            if has_stt and has_ma:
+                header_row_idx = r
                 break
 
-        if header_row is None:
-            return [], "Không tìm thấy hàng tiêu đề (STT, Mã y tế) trong file."
+        if header_row_idx is None:
+            return [], "Không tìm thấy hàng tiêu đề trong file. Kiểm tra đúng loại báo cáo Minh Lộ."
 
-        # Read headers
-        headers = [str(ws.cell(header_row, col).value or '').strip()
-                   for col in range(1, ws.max_column + 1)]
+        headers = [str(v).strip().replace("\n", " ").lower() for v in get_row(header_row_idx)]
 
-        # Map column indices
         def find_col(keywords):
             for i, h in enumerate(headers):
-                h_clean = h.lower().replace('\n', ' ').replace('  ', ' ')
-                if any(k.lower() in h_clean for k in keywords):
+                if any(k.lower() in h for k in keywords):
                     return i
             return None
 
         idx = {
-            'ma_yt':   find_col(['mã y tế', 'ma y te']),
-            'ho_ten':  find_col(['họ tên', 'ho ten', 'bệnh nhân']),
-            'tuoi_nam':find_col(['nam']),
-            'tuoi_nu': find_col(['nữ', 'nu']),
-            'dia_chi': find_col(['địa chỉ', 'dia chi']),
-            'bhyt':    find_col(['bhyt', 'thẻ bảo hiểm']),
-            'bac_sy':  find_col(['bác sỹ khám', 'bác sĩ khám']),
-            'trieu_chung': find_col(['triệu chứng', 'trieu chung']),
-            'chan_doan': find_col(['chẩn đoán', 'chan doan']),
-            'ngay_hen': find_col(['ngày hẹn', 'ngay hen']),
-            'ngay_lap': find_col(['ngày lập', 'ngay lap']),
-            'dt':      find_col(['điện thoại', 'dien thoai', 'sdt']),
-            'khoa_hen': find_col(['khoa hẹn', 'khoa hen']),
-            'bac_sy_hen': find_col(['bác sỹ hẹn', 'bác sĩ hẹn']),
-            'da_kham': find_col(['đã khám', 'da kham']),
+            "ma_yt":      find_col(["mã y tế", "ma y te"]),
+            "ho_ten":     find_col(["họ tên", "ho ten", "bệnh nhân"]),
+            "tuoi_nam":   find_col(["nam"]),
+            "tuoi_nu":    find_col(["nữ", "nu"]),
+            "dia_chi":    find_col(["địa chỉ", "dia chi"]),
+            "bhyt":       find_col(["bhyt"]),
+            "bac_sy":     find_col(["bác sỹ khám", "bac sy kham", "bác sĩ khám"]),
+            "trieu_chung":find_col(["triệu chứng", "trieu chung"]),
+            "chan_doan":   find_col(["chẩn đoán", "chan doan"]),
+            "ngay_hen":   find_col(["ngày hẹn", "ngay hen"]),
+            "ngay_lap":   find_col(["ngày lập", "ngay lap"]),
+            "dt":         find_col(["điện thoại", "dien thoai"]),
+            "khoa_hen":   find_col(["khoa hẹn", "khoa hen"]),
+            "bac_sy_hen": find_col(["bác sỹ hẹn", "bac sy hen", "bác sĩ hẹn"]),
+            "da_kham":    find_col(["đã khám", "da kham"]),
         }
 
-        def cell_val(row_vals, key):
+        def cv(row_vals, key):
             i = idx.get(key)
-            if i is None or i >= len(row_vals): return ''
-            v = row_vals[i]
-            if v is None: return ''
-            return str(v).strip()
+            if i is None or i >= len(row_vals):
+                return ""
+            return str(row_vals[i]).strip()
 
-        def parse_excel_date(val):
-            """Convert Excel serial number or string to dd/mm/yyyy."""
-            if not val or str(val).strip() in ('', 'None'): return ''
+        def to_date(val):
             val = str(val).strip()
-            # Already formatted
-            if re.match(r'\d{1,2}/\d{1,2}/\d{4}', val): return val
-            if re.match(r'\d{4}-\d{2}-\d{2}', val):
-                dt = datetime.strptime(val[:10], '%Y-%m-%d')
-                return dt.strftime('%d/%m/%Y')
-            # Excel serial number
+            if not val or val in ("None", ""):
+                return ""
+            if re.search(r"\d{1,2}/\d{1,2}/\d{4}", val):
+                return re.search(r"\d{1,2}/\d{1,2}/\d{4}", val).group()
+            if re.match(r"\d{4}-\d{2}-\d{2}", val):
+                return datetime.strptime(val[:10], "%Y-%m-%d").strftime("%d/%m/%Y")
+            # Excel serial
             try:
-                serial = float(val)
-                if 40000 < serial < 60000:
-                    dt = datetime(1899, 12, 30) + timedelta(days=serial)
-                    return dt.strftime('%d/%m/%Y')
-            except:
+                s = float(val)
+                if 40000 < s < 60000:
+                    return (datetime(1899, 12, 30) + timedelta(days=int(s))).strftime("%d/%m/%Y")
+            except Exception:
                 pass
             return val
 
-        def parse_time(val):
-            """Convert Excel time fraction to HH:MM."""
-            if not val or str(val).strip() in ('', 'None'): return ''
-            val = str(val).strip()
-            if re.match(r'\d{2}:\d{2}', val): return val[:5]
-            try:
-                frac = float(val)
-                if 0 < frac < 1:
-                    total_sec = int(frac * 86400)
-                    h = total_sec // 3600
-                    m = (total_sec % 3600) // 60
-                    return f"{h:02d}:{m:02d}"
-            except:
-                pass
-            return val
-
-        # Collect data rows — skip header + sub-headers
+        # ── Data rows: skip header + 2 sub-header rows ──
         data_rows = []
-        skip_until = header_row + 2  # skip STT row and col-number row
-        for row in ws.iter_rows(min_row=skip_until, values_only=True):
-            vals = [str(v or '').strip() if v is not None else '' for v in row]
-            if not any(vals): continue  # skip empty rows
+        prev_row = {}   # last non-empty values for fill-down on merged cells
+        for r in range(header_row_idx + 3, max_row + 1):
+            vals = get_row(r)
+            if not any(str(v).strip() for v in vals):
+                continue
 
-            ma_yt = cell_val(vals, 'ma_yt')
-            ho_ten = cell_val(vals, 'ho_ten')
-            if not ma_yt and not ho_ten: continue
-            if ma_yt in ('Mã y tế', 'STT', '2', ''): continue
+            ma_yt  = cv(vals, "ma_yt")
+            ho_ten = cv(vals, "ho_ten")
 
-            ngay_hen_raw = cell_val(vals, 'ngay_hen')
-            ngay_lap_raw = cell_val(vals, 'ngay_lap')
+            # Skip sub-header rows and pure-empty rows
+            if ma_yt.lower() in ("stt", "mã y tế", "2", "") and not ho_ten:
+                continue
 
-            # Detect time suffix in ngay_hen (sometimes stored as datetime serial with time)
-            gio_hen = ''
-            ngay_hen = parse_excel_date(ngay_hen_raw)
+            # Fill-down: if ma_yt empty but we have a previous context, skip
+            # (these are continuation rows for chỉ định điều trị)
+            if not ma_yt and not ho_ten:
+                continue
 
-            # Try to extract time from ngay_lap if it has decimal
+            ngay_raw = cv(vals, "ngay_hen")
+            gio_hen  = ""
             try:
-                serial = float(ngay_hen_raw)
-                if 40000 < serial < 60000:
-                    frac = serial - int(serial)
-                    if frac > 0:
-                        total_sec = int(frac * 86400)
-                        gio_hen = f"{total_sec//3600:02d}:{(total_sec%3600)//60:02d}"
-            except:
+                s = float(ngay_raw)
+                if 40000 < s < 60000:
+                    frac = s - int(s)
+                    if frac > 0.0:
+                        sec = int(frac * 86400)
+                        gio_hen = f"{sec // 3600:02d}:{(sec % 3600) // 60:02d}"
+            except Exception:
                 pass
 
-            # Tuổi → approximate birth year
-            tuoi_nam = cell_val(vals, 'tuoi_nam')
-            tuoi_nu  = cell_val(vals, 'tuoi_nu')
-            tuoi_val = tuoi_nam or tuoi_nu
-            nam_sinh = ''
-            if tuoi_val and re.match(r'\d+', tuoi_val):
+            tuoi_val = cv(vals, "tuoi_nam") or cv(vals, "tuoi_nu")
+            nam_sinh = ""
+            if re.search(r"\d+", tuoi_val):
                 try:
-                    age = int(re.findall(r'\d+', tuoi_val)[0])
-                    nam_sinh = str(datetime.now().year - age)
-                except:
+                    age = int(re.findall(r"\d+", tuoi_val)[0])
+                    if 0 < age < 120:
+                        nam_sinh = str(datetime.now().year - age)
+                except Exception:
                     pass
 
             data_rows.append({
-                'MÃ Y TẾ':              ma_yt,
-                'HỌ TÊN':               ho_ten,
-                'NĂM SINH (ước tính)':  nam_sinh,
-                'ĐỊA CHỈ':              cell_val(vals, 'dia_chi'),
-                'SỐ BHYT':              cell_val(vals, 'bhyt'),
-                'BÁC SĨ KHÁM':          cell_val(vals, 'bac_sy'),
-                'TRIỆU CHỨNG':          cell_val(vals, 'trieu_chung'),
-                'CHẨN ĐOÁN':            cell_val(vals, 'chan_doan'),
-                'NGÀY HẸN':             ngay_hen,
-                'GIỜ HẸN':              gio_hen,
-                'SỐ ĐIỆN THOẠI':        cell_val(vals, 'dt'),
-                'KHOA HẸN':             cell_val(vals, 'khoa_hen'),
-                'BÁC SĨ HẸN':           cell_val(vals, 'bac_sy_hen'),
-                'ĐÃ KHÁM':              cell_val(vals, 'da_kham'),
+                "MÃ Y TẾ":             ma_yt,
+                "HỌ TÊN":              ho_ten,
+                "NĂM SINH (ước tính)": nam_sinh,
+                "ĐỊA CHỈ":             cv(vals, "dia_chi"),
+                "SỐ BHYT":             cv(vals, "bhyt"),
+                "BÁC SĨ KHÁM":         cv(vals, "bac_sy"),
+                "TRIỆU CHỨNG":         cv(vals, "trieu_chung"),
+                "CHẨN ĐOÁN":           cv(vals, "chan_doan"),
+                "NGÀY HẸN":            to_date(ngay_raw),
+                "GIỜ HẸN":             gio_hen,
+                "SỐ ĐIỆN THOẠI":       cv(vals, "dt"),
+                "KHOA HẸN":            cv(vals, "khoa_hen"),
+                "BÁC SĨ HẸN":          cv(vals, "bac_sy_hen"),
+                "ĐÃ KHÁM":             cv(vals, "da_kham"),
             })
 
         return data_rows, None
 
     except Exception as e:
+        import traceback
         return [], f"Lỗi đọc file: {type(e).__name__}: {e}"
-
 
 # Full ordered column list of the Google Sheet (as of latest version)
 SHEET_COLUMNS = [
