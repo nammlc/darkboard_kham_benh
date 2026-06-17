@@ -19,7 +19,7 @@ COL_EXAM_DATE   = "NGÀY KHÁM"
 COL_NAME        = "1. HỌ VÀ TÊN BỆNH NHÂN"
 COL_GENDER      = "3. GIỚI TÍNH"
 COL_SPECIALTY   = "CHUYÊN KHOA MONG MUỐN KHÁM"
-COL_TIMESTAMP   = "THỜI GIAN ĐĂNG KÝ"
+COL_TIMESTAMP   = "Dấu thời gian"
 COL_DOCTOR      = "BÁC SĨ MONG MUỐN ( nếu có)"
 COL_SOURCE      = "NGUỒN BỆNH NHÂN"
 COL_PHONE       = "5. SỐ ĐIÊN THOẠI"
@@ -839,71 +839,68 @@ def parse_minh_lo_excel(uploaded_file):
         import traceback
         return [], f"Lỗi đọc file: {type(e).__name__}: {e}"
 
-# Full ordered column list of the Google Sheet (as of latest version)
+# Full ordered column list of the Google Sheet (khớp đúng thứ tự cột thực tế)
 SHEET_COLUMNS = [
-    "THỜI GIAN ĐĂNG KÝ",                                              # A  - import timestamp
-    "TRẠNG THÁI",                                                      # B  - blank
-    "NGÀY KHÁM",                                                       # C  - Ngày hẹn
-    "1. HỌ VÀ TÊN BỆNH NHÂN",                                         # D  - Họ tên
-    "NĂM SINH",                                                        # E  - N/A
-    "2. ĐỊA CHỈ (THÔN/XÃ)",                                           # F  - Địa chỉ
-    "3. GIỚI TÍNH",                                                    # G  - N/A
-    "1. TRIỆU CHỨNG CHÍNH",                                            # H  - N/A
-    "5. SỐ ĐIÊN THOẠI",                                                # I  - Điện thoại
-    "4. SỐ CĂN CƯỚC CÔNG DÂN - CHỨNG MINH THƯ",                       # J  - N/A
-    "6. ĐỊA CHỈ",                                                      # K  - N/A
-    "CHUYÊN KHOA MONG MUỐN KHÁM",                                      # L  - fixed value
-    "BÁC SĨ MONG MUỐN ( nếu có)",                                      # M  - N/A
-    "GIỜ KHÁM DỰ KIẾN",                                                # N  - N/A
-    "1. CAM KẾT CÁC THÔNG TIN LÀ THÔNG TIN ĐÚNG, CHỊU TRÁCH NHIỆM TRƯỚC PHÁP LUẬT TRƯỚC NHỮNG THÔNG TIN ĐÃ CUNG CẤP TRÊN",  # O - CÓ
-    "ĐỒNG Ý CÁC ĐIỀU KHOẢN ĐẶT LỊCH KHÁM ONLINE TẠI BVĐK TÂM ĐỨC CẦU QUAN",  # P - CÓ
-    "NGUỒN BỆNH NHÂN",                                                 # Q  - fixed value
-    "KHOA KHÁM CHỮA BỆNH",                                             # R  - Khoa hẹn
+    "Dấu thời gian",                                                    # A  - import timestamp
+    "NGUỒN BỆNH NHÂN",                                                  # B  - fixed value
+    "TRẠNG THÁI",                                                       # C  - blank
+    "NGÀY KHÁM",                                                        # D  - Ngày hẹn
+    "1. HỌ VÀ TÊN BỆNH NHÂN",                                          # E  - Họ tên
+    "NĂM SINH",                                                         # F  - N/A
+    "5. SỐ ĐIÊN THOẠI",                                                 # G  - Điện thoại
+    "2. ĐỊA CHỈ (THÔN/XÃ)",                                            # H  - Địa chỉ
+    "KHOA KHÁM CHỮA BỆNH",                                              # I  - Khoa hẹn
+    "3. GIỚI TÍNH",                                                     # J  - N/A
+    "1. TRIỆU CHỨNG CHÍNH",                                             # K  - N/A
+    "4. SỐ CĂN CƯỚC CÔNG DÂN - CHỨNG MINH THƯ",                        # L  - N/A
+    "CHUYÊN KHOA MONG MUỐN KHÁM",                                       # M  - fixed value
+    "BÁC SĨ MONG MUỐN ( nếu có)",                                       # N  - N/A
+    "GIỜ KHÁM DỰ KIẾN",                                                 # O  - N/A
+    "1. CAM KẾT CÁC THÔNG TIN LÀ THÔNG TIN ĐÚNG, CHỊU TRÁCH NHIỆM TRƯỚC PHÁP LUẬT TRƯỚC NHỮNG THÔNG TIN ĐÃ CUNG CẤP TRÊN",  # P - CÓ
+    "ĐỒNG Ý CÁC ĐIỀU KHOẢN ĐẶT LỊCH KHÁM ONLINE TẠI BVĐK TÂM ĐỨC CẦU QUAN",  # Q - CÓ
 ]
 
 def build_sheet_row(record, import_time_str):
     """
     Map one Minh Lo Excel record → one row matching SHEET_COLUMNS order.
 
-    Mapping rules:
-      - THỜI GIAN ĐĂNG KÝ         = thời gian import file
-      - TRẠNG THÁI                 = "" (trống)
-      - NGÀY KHÁM                  = NGÀY HẸN từ Excel
-      - 1. HỌ VÀ TÊN BỆNH NHÂN    = HỌ TÊN từ Excel
-      - NĂM SINH                   = N/A
-      - 2. ĐỊA CHỈ (THÔN/XÃ)      = ĐỊA CHỈ từ Excel
-      - 3. GIỚI TÍNH               = N/A
-      - 1. TRIỆU CHỨNG CHÍNH       = N/A
-      - 5. SỐ ĐIÊN THOẠI           = SỐ ĐIỆN THOẠI từ Excel
-      - 4. SỐ CĂN CƯỚC...          = N/A
-      - 6. ĐỊA CHỈ                 = N/A
-      - CHUYÊN KHOA MONG MUỐN      = "Other: Bệnh nhân điều trị nội khoa tái khám"
-      - BÁC SĨ MONG MUỐN           = N/A
-      - GIỜ KHÁM DỰ KIẾN           = N/A
-      - CAM KẾT...                 = "CÓ"
-      - ĐỒNG Ý...                  = "CÓ"
-      - NGUỒN BỆNH NHÂN            = "Bệnh nhân điều trị nội khoa tái khám"
-      - KHOA KHÁM CHỮA BỆNH        = KHOA HẸN từ Excel
+    Thứ tự cột Google Sheet thực tế:
+      A - Dấu thời gian            = thời gian import file
+      B - NGUỒN BỆNH NHÂN          = "Bệnh nhân điều trị nội khoa tái khám"
+      C - TRẠNG THÁI               = "" (trống)
+      D - NGÀY KHÁM                = NGÀY HẸN từ Excel
+      E - 1. HỌ VÀ TÊN BỆNH NHÂN  = HỌ TÊN từ Excel
+      F - NĂM SINH                 = N/A
+      G - 5. SỐ ĐIÊN THOẠI         = SỐ ĐIỆN THOẠI từ Excel
+      H - 2. ĐỊA CHỈ (THÔN/XÃ)    = ĐỊA CHỈ từ Excel
+      I - KHOA KHÁM CHỮA BỆNH      = KHOA HẸN từ Excel
+      J - 3. GIỚI TÍNH             = N/A
+      K - 1. TRIỆU CHỨNG CHÍNH     = N/A
+      L - 4. SỐ CĂN CƯỚC...        = N/A
+      M - CHUYÊN KHOA MONG MUỐN    = "Other: Bệnh nhân điều trị nội khoa tái khám"
+      N - BÁC SĨ MONG MUỐN         = N/A
+      O - GIỜ KHÁM DỰ KIẾN         = N/A
+      P - CAM KẾT...               = "CÓ"
+      Q - ĐỒNG Ý...                = "CÓ"
     """
     return [
-        import_time_str,                                        # THỜI GIAN ĐĂNG KÝ
-        "",                                                     # TRẠNG THÁI (trống)
-        record.get("NGÀY HẸN", "N/A"),                         # NGÀY KHÁM
-        record.get("HỌ TÊN", "N/A"),                           # HỌ VÀ TÊN BỆNH NHÂN
-        "N/A",                                                  # NĂM SINH
-        record.get("ĐỊA CHỈ", "N/A"),                          # ĐỊA CHỈ (THÔN/XÃ)
-        "N/A",                                                  # GIỚI TÍNH
-        "N/A",                                                  # TRIỆU CHỨNG CHÍNH
-        record.get("SỐ ĐIỆN THOẠI", "N/A"),                    # SỐ ĐIÊN THOẠI
-        "N/A",                                                  # SỐ CĂN CƯỚC
-        "N/A",                                                  # ĐỊA CHỈ (6)
-        "Other: Bệnh nhân điều trị nội khoa tái khám",         # CHUYÊN KHOA
-        "N/A",                                                  # BÁC SĨ MONG MUỐN
-        "N/A",                                                  # GIỜ KHÁM DỰ KIẾN
-        "CÓ",                                                   # CAM KẾT
-        "CÓ",                                                   # ĐỒNG Ý
-        "Bệnh nhân điều trị nội khoa tái khám",                # NGUỒN BỆNH NHÂN
-        record.get("KHOA HẸN", "N/A"),                         # KHOA KHÁM CHỮA BỆNH
+        import_time_str,                                        # A - Dấu thời gian
+        "Bệnh nhân điều trị nội khoa tái khám",                # B - NGUỒN BỆNH NHÂN
+        "",                                                     # C - TRẠNG THÁI (trống)
+        record.get("NGÀY HẸN", "N/A"),                         # D - NGÀY KHÁM
+        record.get("HỌ TÊN", "N/A"),                           # E - HỌ VÀ TÊN BỆNH NHÂN
+        "N/A",                                                  # F - NĂM SINH
+        record.get("SỐ ĐIỆN THOẠI", "N/A"),                    # G - SỐ ĐIÊN THOẠI
+        record.get("ĐỊA CHỈ", "N/A"),                          # H - ĐỊA CHỈ (THÔN/XÃ)
+        record.get("KHOA HẸN", "N/A"),                         # I - KHOA KHÁM CHỮA BỆNH
+        "N/A",                                                  # J - GIỚI TÍNH
+        "N/A",                                                  # K - TRIỆU CHỨNG CHÍNH
+        "N/A",                                                  # L - SỐ CĂN CƯỚC
+        "Other: Bệnh nhân điều trị nội khoa tái khám",         # M - CHUYÊN KHOA MONG MUỐN
+        "N/A",                                                  # N - BÁC SĨ MONG MUỐN
+        "N/A",                                                  # O - GIỜ KHÁM DỰ KIẾN
+        "CÓ",                                                   # P - CAM KẾT
+        "CÓ",                                                   # Q - ĐỒNG Ý
     ]
 
 
