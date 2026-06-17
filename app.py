@@ -20,6 +20,7 @@ COL_GENDER      = "3. GIỚI TÍNH"
 COL_SPECIALTY   = "CHUYÊN KHOA MONG MUỐN KHÁM"
 COL_TIMESTAMP   = "THỜI GIAN ĐĂNG KÝ"
 COL_DOCTOR      = "BÁC SĨ MONG MUỐN ( nếu có)"
+COL_SOURCE      = "NGUỒN BỆNH NHÂN"
 STATUS_ATTENDED = "BỆNH NHÂN ĐÃ KHÁM"
 SCOPES = [
     "https://www.googleapis.com/auth/spreadsheets.readonly",
@@ -306,6 +307,60 @@ div[data-testid="stDownloadButton"] button {
     font-size:0.82rem !important;
 }
 
+/* ── SOURCE BADGES ── */
+.src-noi  { background:#ede9fe; color:#5b21b6; border:1px solid #c4b5fd; }
+.src-vl   { background:#fef3c7; color:#92400e; border:1px solid #fcd34d; }
+.src-other{ background:#f1f5f9; color:#475569; border:1px solid #cbd5e1; }
+
+/* ── 3-DAY UPCOMING TABLE ── */
+.upcoming-day {
+    background:white; border-radius:14px;
+    border:1px solid #e2e8f0;
+    box-shadow:0 1px 3px rgba(0,0,0,0.05),0 3px 12px rgba(0,0,0,0.04);
+    margin-bottom:0.9rem; overflow:hidden;
+}
+.upcoming-day-header {
+    display:flex; align-items:center; justify-content:space-between;
+    padding:0.75rem 1rem;
+    background:linear-gradient(135deg,#1e3a5f,#0e4d7a);
+}
+.upcoming-day-title { font-size:0.88rem; font-weight:700; color:#f0f9ff; }
+.upcoming-day-count {
+    font-size:0.72rem; font-weight:700;
+    background:rgba(255,255,255,0.15); color:white;
+    border-radius:20px; padding:0.18rem 0.6rem;
+}
+.upcoming-day-body { padding:0.5rem 0.75rem 0.75rem; }
+
+/* ── SOURCE STATS CARDS ── */
+.src-grid {
+    display:grid; grid-template-columns:repeat(2,1fr);
+    gap:0.6rem; margin-bottom:1rem;
+}
+@media(min-width:640px){ .src-grid { grid-template-columns:repeat(3,1fr); } }
+.src-card {
+    background:white; border-radius:14px;
+    padding:0.9rem 1rem; border:1px solid #e2e8f0;
+    box-shadow:0 1px 3px rgba(0,0,0,0.05),0 3px 12px rgba(0,0,0,0.04);
+    text-align:center; position:relative; overflow:hidden;
+}
+.src-card::after {
+    content:''; position:absolute; top:0; left:0; right:0; height:3px;
+    border-radius:14px 14px 0 0;
+}
+.src-card-noi::after  { background:linear-gradient(90deg,#8b5cf6,#a78bfa); }
+.src-card-vl::after   { background:linear-gradient(90deg,#f59e0b,#fbbf24); }
+.src-card-total::after{ background:linear-gradient(90deg,#3b82f6,#60a5fa); }
+.src-card-ico  { font-size:1.6rem; margin-bottom:0.3rem; }
+.src-card-lbl  { font-size:0.62rem; font-weight:700; text-transform:uppercase;
+                 letter-spacing:0.08em; color:#94a3b8; margin-bottom:0.25rem; }
+.src-card-val  { font-size:1.8rem; font-weight:700; color:#0f172a;
+                 font-family:'JetBrains Mono',monospace !important; line-height:1; }
+.src-card-sub  { font-size:0.62rem; color:#94a3b8; margin-top:0.2rem; }
+@media(min-width:640px){
+    .src-card-val { font-size:2.1rem; }
+}
+
 /* Scroll hint */
 .scroll-hint {
     text-align:center; font-size:0.65rem; color:#94a3b8;
@@ -399,6 +454,66 @@ def ch_trend(stats, color):
         bargap=0.3)
     return fig
 
+def ch_source_donut(noi, vl, other):
+    """Donut chart for patient source breakdown."""
+    labels = ["Từ khoa / Tái khám", "Bệnh nhân vãng lai"]
+    values = [noi, vl]
+    colors = [CV, CA]
+    if other > 0:
+        labels.append("Khác")
+        values.append(other)
+        colors.append(CS)
+    fig = go.Figure(go.Pie(
+        labels=labels, values=values, hole=0.65,
+        marker=dict(colors=colors, line=dict(color="#fff", width=3)),
+        textinfo="percent", textfont=dict(size=12),
+        hovertemplate="<b>%{label}</b><br>%{value} người · %{percent}<extra></extra>",
+        pull=[0.02]*len(labels), direction="clockwise",
+    ))
+    total = noi + vl + other
+    fig.update_layout(**BASE, height=260, showlegend=False,
+        margin=dict(t=8,b=8,l=16,r=16),
+        annotations=[dict(
+            text=f"<b>{total}</b><br><span style='font-size:10px;color:#94a3b8'>bệnh nhân</span>",
+            x=0.5, y=0.5, showarrow=False,
+            font=dict(size=20, color="#0f172a"),
+        )])
+    return fig
+
+def ch_source_trend(df, period):
+    """Stacked bar trend by source."""
+    if "_date" not in df.columns or not df["_date"].notna().any(): return None
+    if COL_SOURCE not in df.columns: return None
+    d = df[df["_date"].notna()].copy()
+    if period=="Ngày":   d["Kỳ"] = d["_date"].dt.strftime("%d/%m/%Y")
+    elif period=="Tuần": d["Kỳ"] = d["_date"].apply(
+        lambda x: f"T{x.isocalendar()[1]}/{x.year}")
+    elif period=="Tháng": d["Kỳ"] = d["_date"].dt.strftime("Tháng %m/%Y")
+    elif period=="Quý":   d["Kỳ"] = d["_date"].apply(lambda x: f"Q{((x.month-1)//3)+1}/{x.year}")
+    elif period=="Năm":   d["Kỳ"] = d["_date"].dt.strftime("Năm %Y")
+    src = d[COL_SOURCE].astype(str).str.strip()
+    noi_mask = src.str.contains("khoa|tái|nội trú|xuất viện", case=False, na=False)
+    vl_mask  = src.str.contains("vãng lai|vang lai|ngoài|ngoai", case=False, na=False)
+    d["_src_noi"] = noi_mask.astype(int)
+    d["_src_vl"]  = vl_mask.astype(int)
+    first = d.groupby("Kỳ")["_date"].min().reset_index()
+    first.columns = ["Kỳ","_s"]
+    grp = d.groupby("Kỳ")[["_src_noi","_src_vl"]].sum().reset_index()
+    grp = grp.merge(first, on="Kỳ").sort_values("_s").drop(columns="_s")
+    fig = go.Figure()
+    fig.add_trace(go.Bar(x=grp["Kỳ"], y=grp["_src_noi"], name="Từ khoa / Tái khám",
+        marker=dict(color=CV, opacity=0.85), hovertemplate="<b>%{x}</b><br>Từ khoa: %{y}<extra></extra>"))
+    fig.add_trace(go.Bar(x=grp["Kỳ"], y=grp["_src_vl"], name="Bệnh nhân vãng lai",
+        marker=dict(color=CA, opacity=0.85), hovertemplate="<b>%{x}</b><br>Vãng lai: %{y}<extra></extra>"))
+    fig.update_layout(**BASE, height=260, barmode="stack",
+        margin=dict(t=10,b=10,l=8,r=8),
+        xaxis=dict(tickangle=-30, tickfont=dict(size=8,color="#64748b"), showgrid=False),
+        yaxis=dict(gridcolor="#f1f5f9", zeroline=False, tickfont=dict(size=8)),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1,
+                    font=dict(size=10)),
+        bargap=0.3)
+    return fig
+
 # ═══════════════════════════════════════════════
 # DATA FUNCTIONS
 # ═══════════════════════════════════════════════
@@ -473,15 +588,25 @@ def process(df):
             gen.columns = ["Giới tính","Số lượng"]
     stbl = df[COL_STATUS].value_counts().reset_index()
     stbl.columns = ["Trạng thái","Số lượng"]
+    # Source stats
+    src_noi = src_vl = src_other = 0
+    if COL_SOURCE in df.columns:
+        src_vals = df[COL_SOURCE].astype(str).str.strip()
+        src_noi   = int(src_vals.str.contains("khoa|tái|nội trú|xuất viện|tai", case=False, na=False).sum())
+        src_vl    = int(src_vals.str.contains("vãng lai|vang lai|ngoài|ngoai", case=False, na=False).sum())
+        src_other = total - src_noi - src_vl
+
     return dict(total=total,att=att,nos=nos,
                 att_pct=round(att/total*100,1),
                 nos_pct=round(nos/total*100,1),
-                spec=spec, gen=gen, stbl=stbl, df=df)
+                spec=spec, gen=gen, stbl=stbl, df=df,
+                src_noi=src_noi, src_vl=src_vl, src_other=src_other)
 
 def _mk_empty(df):
     df = df.copy(); df["_date"]=pd.NaT
     return dict(total=0,att=0,nos=0,att_pct=0.0,nos_pct=0.0,
-                spec=None,gen=None,stbl=None,df=df)
+                spec=None,gen=None,stbl=None,df=df,
+                src_noi=0,src_vl=0,src_other=0)
 
 def today_stats(df, today_date):
     """Stats for a specific date."""
@@ -510,29 +635,44 @@ def build_stats(df, period):
     first = d.groupby("Kỳ")["_date"].min().reset_index(); first.columns=["Kỳ","_s"]
     return stats.merge(first,on="Kỳ").sort_values("_s").drop(columns="_s")
 
+def source_badge(src_val):
+    """Return HTML badge for patient source."""
+    s = str(src_val).strip()
+    if not s or s in ("nan",""):
+        return ""
+    if any(k in s.lower() for k in ["khoa","tái","nội trú","xuất viện","tai"]):
+        return f'<span class="pt-tag src-noi">🏥 {s[:30]}</span>'
+    elif any(k in s.lower() for k in ["vãng lai","vang lai","ngoài","ngoai"]):
+        return f'<span class="pt-tag src-vl">🚶 {s[:30]}</span>'
+    else:
+        return f'<span class="pt-tag src-other">👤 {s[:30]}</span>'
+
 def patient_card_html(row):
-    """Render a mobile-friendly patient card."""
-    name    = row.get(COL_NAME,"") or "—"
-    dt      = row.get(COL_EXAM_DATE,"") or "—"
-    spec    = row.get(COL_SPECIALTY,"") or "—"
-    doc     = row.get(COL_DOCTOR,"") or ""
-    status  = str(row.get(COL_STATUS,""))
-    ts      = row.get(COL_TIMESTAMP,"") or ""
+    """Render a mobile-friendly patient card with source badge."""
+    name   = row.get(COL_NAME,"") or "—"
+    dt     = row.get(COL_EXAM_DATE,"") or "—"
+    spec   = row.get(COL_SPECIALTY,"") or "—"
+    doc    = row.get(COL_DOCTOR,"") or ""
+    status = str(row.get(COL_STATUS,""))
+    ts     = row.get(COL_TIMESTAMP,"") or ""
+    src    = row.get(COL_SOURCE,"") or ""
     status_cls = ("pt-status-att" if STATUS_ATTENDED.upper() in status.upper()
                   else "pt-status-nos" if status.strip() else "pt-status-oth")
     doc_tag = f'<span class="pt-tag pt-tag-doc">👨‍⚕️ {doc[:25]}</span>' if doc.strip() else ""
-    return f"""
-    <div class="pt-card">
+    src_tag = source_badge(src)
+    ts_row  = f'<div style="font-size:0.62rem;color:#94a3b8;margin-top:0.15rem">🕐 {ts}</div>' if ts else ""
+    return f"""<div class="pt-card">
       <div class="pt-name">{name}</div>
       <div class="pt-row">
         <span class="pt-tag pt-tag-date">📅 {dt}</span>
-        <span class="pt-tag pt-tag-spec">🩺 {spec[:30]}</span>
+        <span class="pt-tag pt-tag-spec">🩺 {spec[:28]}</span>
         {doc_tag}
       </div>
       <div class="pt-row">
-        <span class="pt-tag {status_cls}">{status or '—'}</span>
-        {"<span style='font-size:0.62rem;color:#94a3b8'>🕐 "+ts+"</span>" if ts else ""}
+        <span class="pt-tag {status_cls}">{status or "—"}</span>
+        {src_tag}
       </div>
+      {ts_row}
     </div>"""
 
 # ═══════════════════════════════════════════════
@@ -639,9 +779,11 @@ if st.session_state.metrics:
     """, unsafe_allow_html=True)
 
     # ── TABS ────────────────────────────────────
-    tab1, tab2, tab3, tab4 = st.tabs([
+    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
         "📊 Tổng Quan",
         "🔍 Tìm Theo Ngày",
+        "📅 3 Ngày Tới",
+        "🏥 Nguồn Bệnh Nhân",
         "📈 Báo Cáo",
         "👤 Bệnh Nhân",
     ])
@@ -796,9 +938,128 @@ if st.session_state.metrics:
             """, unsafe_allow_html=True)
 
     # ════════════════
-    # TAB 3 — BÁO CÁO
+    # TAB 4 — NGUỒN BỆNH NHÂN
     # ════════════════
-    with tab3:
+    with tab4:
+        src_noi   = m.get("src_noi", 0)
+        src_vl    = m.get("src_vl", 0)
+        src_other = m.get("src_other", 0)
+        src_total = src_noi + src_vl + src_other
+
+        # ── Source KPI cards ──
+        st.markdown(f"""
+        <div class="src-grid">
+          <div class="src-card src-card-noi">
+            <div class="src-card-ico">🏥</div>
+            <div class="src-card-lbl">Từ Khoa / Tái Khám</div>
+            <div class="src-card-val">{src_noi}</div>
+            <div class="src-card-sub">{round(src_noi/src_total*100,1) if src_total>0 else 0}% tổng đăng ký</div>
+          </div>
+          <div class="src-card src-card-vl">
+            <div class="src-card-ico">🚶</div>
+            <div class="src-card-lbl">Bệnh Nhân Vãng Lai</div>
+            <div class="src-card-val">{src_vl}</div>
+            <div class="src-card-sub">{round(src_vl/src_total*100,1) if src_total>0 else 0}% tổng đăng ký</div>
+          </div>
+          <div class="src-card src-card-total">
+            <div class="src-card-ico">📋</div>
+            <div class="src-card-lbl">Tổng Có Nguồn</div>
+            <div class="src-card-val">{src_total}</div>
+            <div class="src-card-sub">{m["total"]} tổng đăng ký</div>
+          </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+        if src_total > 0:
+            # ── Donut chart ──
+            st.markdown(f'<div class="sh"><div class="sh-dot" style="background:{CV}"></div><span class="sh-txt">Phân Bố Nguồn Bệnh Nhân</span></div>', unsafe_allow_html=True)
+            dc1, dc2 = st.columns([3,2])
+            with dc1:
+                st.markdown('<div class="cc">', unsafe_allow_html=True)
+                st.plotly_chart(ch_source_donut(src_noi, src_vl, src_other),
+                                use_container_width=True, config={"displayModeBar":False})
+                st.markdown(f"""<div class="lgd">
+                  <div class="lgd-i"><div class="lgd-dot" style="background:{CV}"></div>
+                    Từ khoa / Tái khám — <b style="color:#0f172a">{src_noi}</b></div>
+                  <div class="lgd-i"><div class="lgd-dot" style="background:{CA}"></div>
+                    Bệnh nhân vãng lai — <b style="color:#0f172a">{src_vl}</b></div>
+                </div>""", unsafe_allow_html=True)
+                st.markdown('</div>', unsafe_allow_html=True)
+
+            with dc2:
+                # Tái khám stats breakdown
+                st.markdown(f'<div class="sh"><div class="sh-dot" style="background:{CV}"></div><span class="sh-txt">Thống Kê Tái Khám</span></div>', unsafe_allow_html=True)
+                if COL_SOURCE in df.columns and src_noi > 0:
+                    noi_df = df[df[COL_SOURCE].astype(str).str.contains("khoa|tái|nội trú|xuất viện|tai", case=False, na=False)]
+                    noi_att = int((noi_df[COL_STATUS].str.upper()==STATUS_ATTENDED.upper()).sum())
+                    noi_nos = len(noi_df) - noi_att
+                    noi_pct = round(noi_att/len(noi_df)*100,1) if len(noi_df)>0 else 0
+                    st.markdown(f"""
+                    <div style="background:white;border-radius:12px;padding:1rem;border:1px solid #e2e8f0">
+                      <div style="display:flex;flex-direction:column;gap:0.7rem">
+                        <div style="display:flex;justify-content:space-between;align-items:center;padding:0.5rem 0;border-bottom:1px solid #f1f5f9">
+                          <span style="font-size:0.78rem;color:#475569;font-weight:500">Tổng tái khám</span>
+                          <span style="font-size:1rem;font-weight:700;color:#0f172a;font-family:JetBrains Mono,monospace">{src_noi}</span>
+                        </div>
+                        <div style="display:flex;justify-content:space-between;align-items:center;padding:0.5rem 0;border-bottom:1px solid #f1f5f9">
+                          <span style="font-size:0.78rem;color:#059669;font-weight:500">✅ Đã đến khám</span>
+                          <span style="font-size:1rem;font-weight:700;color:#059669;font-family:JetBrains Mono,monospace">{noi_att}</span>
+                        </div>
+                        <div style="display:flex;justify-content:space-between;align-items:center;padding:0.5rem 0;border-bottom:1px solid #f1f5f9">
+                          <span style="font-size:0.78rem;color:#dc2626;font-weight:500">❌ Vắng / Chưa</span>
+                          <span style="font-size:1rem;font-weight:700;color:#dc2626;font-family:JetBrains Mono,monospace">{noi_nos}</span>
+                        </div>
+                        <div style="display:flex;justify-content:space-between;align-items:center;padding:0.5rem 0">
+                          <span style="font-size:0.78rem;color:#475569;font-weight:500">📊 Tỷ lệ đến</span>
+                          <span style="font-size:1rem;font-weight:700;color:#8b5cf6;font-family:JetBrains Mono,monospace">{noi_pct}%</span>
+                        </div>
+                      </div>
+                    </div>
+                    """, unsafe_allow_html=True)
+                else:
+                    st.info("Không có dữ liệu tái khám.")
+
+            # ── Trend by period ──
+            st.markdown(f'<div class="sh"><div class="sh-dot" style="background:{CA}"></div><span class="sh-txt">Xu Hướng Nguồn Bệnh Nhân Theo Tháng</span></div>', unsafe_allow_html=True)
+            src_period = st.radio("Xem theo:", ["Ngày","Tuần","Tháng","Quý","Năm"],
+                horizontal=True, index=2, label_visibility="collapsed", key="src_period")
+            ft_src = ch_source_trend(df, src_period)
+            if ft_src:
+                st.markdown('<div class="cc">', unsafe_allow_html=True)
+                st.plotly_chart(ft_src, use_container_width=True, config={"displayModeBar":False})
+                st.markdown('</div>', unsafe_allow_html=True)
+
+            # ── Danh sách tái khám ──
+            if COL_SOURCE in df.columns and src_noi > 0:
+                st.markdown(f'<div class="sh"><div class="sh-dot" style="background:{CV}"></div><span class="sh-txt">Danh Sách Bệnh Nhân Từ Khoa / Tái Khám</span></div>', unsafe_allow_html=True)
+                noi_list = df[df[COL_SOURCE].astype(str).str.contains("khoa|tái|nội trú|xuất viện|tai", case=False, na=False)]
+                show_src_cols = [col for col in [COL_TIMESTAMP,COL_NAME,COL_EXAM_DATE,
+                                                  COL_STATUS,COL_SPECIALTY,COL_SOURCE]
+                                 if col in noi_list.columns]
+                MAX_SRC = 50
+                cards_src = "".join(patient_card_html(row) for _,row in noi_list[show_src_cols].head(MAX_SRC).iterrows())
+                st.markdown(cards_src, unsafe_allow_html=True)
+                if len(noi_list) > MAX_SRC:
+                    st.info(f"Hiển thị {MAX_SRC}/{len(noi_list)}. Tải CSV để xem đầy đủ.")
+                csv_src = noi_list[show_src_cols].to_csv(index=False, encoding="utf-8-sig")
+                st.download_button(
+                    label="⬇️ Tải danh sách tái khám (.csv)",
+                    data=csv_src.encode("utf-8-sig"),
+                    file_name=f"taikham_{datetime.now().strftime('%Y%m%d')}.csv",
+                    mime="text/csv",
+                )
+        else:
+            st.markdown("""<div class="empty">
+              <div class="empty-ico">📭</div>
+              <div class="empty-ttl">Chưa có dữ liệu nguồn bệnh nhân</div>
+              <div class="empty-dsc">Vui lòng điền cột <b>NGUỒN BỆNH NHÂN</b> trong Google Sheet.<br>
+              Giá trị gợi ý: "Từ khoa / Tái khám" hoặc "Bệnh nhân vãng lai".</div>
+            </div>""", unsafe_allow_html=True)
+
+    # ════════════════
+    # TAB 5 — BÁO CÁO
+    # ════════════════
+    with tab5:
         period_opts   = ["Ngày","Tuần","Tháng","Quý","Năm"]
         period_colors = [CB,CT,CV,CA,CG]
         period_icons  = ["📆","🗓️","🗂️","📊","🏆"]
@@ -886,11 +1147,11 @@ if st.session_state.metrics:
             </div>""", unsafe_allow_html=True)
 
     # ════════════════
-    # TAB 4 — BỆNH NHÂN
+    # TAB 6 — BỆNH NHÂN
     # ════════════════
-    with tab4:
+    with tab6:
         show_cols = [c for c in [COL_TIMESTAMP,COL_NAME,COL_EXAM_DATE,
-                                  COL_STATUS,COL_SPECIALTY,COL_GENDER]
+                                  COL_STATUS,COL_SPECIALTY,COL_GENDER,COL_SOURCE]
                      if c in df.columns]
 
         st.markdown(f'<div class="sh"><div class="sh-dot" style="background:{CA}"></div><span class="sh-txt">Lọc Danh Sách Bệnh Nhân</span></div>', unsafe_allow_html=True)
