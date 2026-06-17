@@ -21,6 +21,9 @@ COL_SPECIALTY   = "CHUYÊN KHOA MONG MUỐN KHÁM"
 COL_TIMESTAMP   = "THỜI GIAN ĐĂNG KÝ"
 COL_DOCTOR      = "BÁC SĨ MONG MUỐN ( nếu có)"
 COL_SOURCE      = "NGUỒN BỆNH NHÂN"
+COL_PHONE       = "5. SỐ ĐIÊN THOẠI"
+COL_BIRTH_YEAR  = "NĂM SINH"
+COL_EXAM_TIME   = "GIỜ KHÁM DỰ KIẾN"
 STATUS_ATTENDED = "BỆNH NHÂN ĐÃ KHÁM"
 SCOPES = [
     "https://www.googleapis.com/auth/spreadsheets.readonly",
@@ -961,6 +964,157 @@ if st.session_state.metrics:
               <div class="empty-dsc">Thử chọn ngày khác hoặc thay đổi bộ lọc trạng thái.</div>
             </div>
             """, unsafe_allow_html=True)
+
+    # ════════════════
+    # TAB 3 — 3 NGÀY TỚI
+    # ════════════════
+    with tab3:
+        st.markdown(
+            '<div class="sh"><div class="sh-dot" style="background:#f59e0b"></div>'
+            '<span class="sh-txt">Danh Sách Bệnh Nhân Chuẩn Bị Khám Trong 3 Ngày Tới</span></div>',
+            unsafe_allow_html=True
+        )
+
+        # Build list of next 3 days (exclude today)
+        upcoming_dates = [today + timedelta(days=i) for i in range(1, 4)]
+        total_upcoming = 0
+
+        if "_date" in df.columns and df["_date"].notna().any():
+            for udate in upcoming_dates:
+                day_df = df[df["_date"].dt.date == udate].copy()
+                count  = len(day_df)
+                total_upcoming += count
+
+                # Day header
+                day_labels = {0:"Thứ Hai",1:"Thứ Ba",2:"Thứ Tư",
+                               3:"Thứ Năm",4:"Thứ Sáu",5:"Thứ Bảy",6:"Chủ Nhật"}
+                weekday_vn = day_labels.get(udate.weekday(), "")
+                day_title  = weekday_vn + " — " + udate.strftime("%d/%m/%Y")
+
+                # Accent color per day
+                day_colors = ["#3b82f6","#10b981","#8b5cf6"]
+                dci = upcoming_dates.index(udate)
+                dc  = day_colors[dci]
+
+                st.markdown(
+                    '<div class="upcoming-day">'
+                    '<div class="upcoming-day-header" style="background:linear-gradient(135deg,' + dc + ',#0f172a);">'
+                    '<span class="upcoming-day-title">&#128197; ' + day_title + '</span>'
+                    '<span class="upcoming-day-count">' + str(count) + ' bệnh nhân</span>'
+                    '</div>',
+                    unsafe_allow_html=True
+                )
+
+                if count > 0:
+                    # Sort by exam time if available
+                    if COL_EXAM_TIME in day_df.columns:
+                        day_df = day_df.sort_values(COL_EXAM_TIME)
+
+                    # Build table rows
+                    rows_html = ""
+                    for idx2, row2 in day_df.iterrows():
+                        name  = str(row2.get(COL_NAME,"") or "—")
+                        byr   = str(row2.get(COL_BIRTH_YEAR,"") or "—")
+                        phone = str(row2.get(COL_PHONE,"") or "—")
+                        etime = str(row2.get(COL_EXAM_TIME,"") or "—")
+                        spec  = str(row2.get(COL_SPECIALTY,"") or "—")
+                        src   = str(row2.get(COL_SOURCE,"") or "—")
+                        stat  = str(row2.get(COL_STATUS,"") or "—")
+
+                        # Shorten time hh:mm:ss -> hh:mm
+                        if len(etime) >= 5 and ":" in etime:
+                            etime = etime[:5]
+
+                        # Shorten spec
+                        if len(spec) > 30:
+                            spec = spec[:30] + "…"
+
+                        # Status color
+                        if STATUS_ATTENDED.upper() in stat.upper():
+                            stat_style = "color:#059669;font-weight:700"
+                        else:
+                            stat_style = "color:#475569"
+
+                        # Phone — mask middle digits for privacy
+                        if phone not in ("—","N/A","nan","") and len(phone) >= 8:
+                            phone_show = phone[:3] + "****" + phone[-3:]
+                        else:
+                            phone_show = phone
+
+                        rows_html += (
+                            '<tr>'
+                            '<td style="font-weight:600;color:#0f172a">' + name + '</td>'
+                            '<td style="font-family:JetBrains Mono,monospace;color:#1d4ed8">' + etime + '</td>'
+                            '<td>' + byr + '</td>'
+                            '<td>' + phone_show + '</td>'
+                            '<td style="max-width:140px;white-space:normal">' + spec + '</td>'
+                            '<td>' + src + '</td>'
+                            '<td style="' + stat_style + '">' + stat + '</td>'
+                            '</tr>'
+                        )
+
+                    st.markdown(
+                        '<div class="upcoming-day-body">'
+                        '<div class="rtbl-wrap">'
+                        '<table class="rtbl"><thead><tr>'
+                        '<th>Họ Tên</th>'
+                        '<th>Giờ Khám</th>'
+                        '<th>Năm Sinh</th>'
+                        '<th>Số ĐT</th>'
+                        '<th>Chuyên Khoa</th>'
+                        '<th>Nguồn BN</th>'
+                        '<th>Trạng Thái</th>'
+                        '</tr></thead>'
+                        '<tbody>' + rows_html + '</tbody>'
+                        '</table></div>'
+                        '<div class="scroll-hint">&#8592; Vuốt ngang để xem thêm &#8594;</div>'
+                        '</div>',
+                        unsafe_allow_html=True
+                    )
+
+                    # Download CSV per day
+                    dl_cols = [col for col in [COL_NAME, COL_BIRTH_YEAR, COL_PHONE,
+                                               COL_EXAM_DATE, COL_EXAM_TIME,
+                                               COL_SPECIALTY, COL_DOCTOR,
+                                               COL_SOURCE, COL_STATUS]
+                               if col in day_df.columns]
+                    csv_up = day_df[dl_cols].to_csv(index=False, encoding="utf-8-sig")
+                    st.download_button(
+                        label="&#11015;&#65039; Tải danh sách " + udate.strftime("%d/%m/%Y") + " (.csv)",
+                        data=csv_up.encode("utf-8-sig"),
+                        file_name="lichkham_" + udate.strftime("%d%m%Y") + ".csv",
+                        mime="text/csv",
+                        key="dl_upcoming_" + udate.strftime("%Y%m%d"),
+                    )
+                else:
+                    st.markdown(
+                        '<div class="upcoming-day-body">'
+                        '<p style="color:#94a3b8;font-size:0.82rem;text-align:center;padding:0.8rem 0">'
+                        'Chưa có bệnh nhân đăng ký ngày này.</p>'
+                        '</div>',
+                        unsafe_allow_html=True
+                    )
+
+                st.markdown('</div>', unsafe_allow_html=True)  # close upcoming-day
+
+            if total_upcoming == 0:
+                st.markdown(
+                    '<div class="empty">'
+                    '<div class="empty-ico">&#128197;</div>'
+                    '<div class="empty-ttl">Chưa có lịch hẹn trong 3 ngày tới</div>'
+                    '<div class="empty-dsc">Bệnh nhân chưa đăng ký lịch khám cho các ngày sắp tới.</div>'
+                    '</div>',
+                    unsafe_allow_html=True
+                )
+        else:
+            st.markdown(
+                '<div class="empty">'
+                '<div class="empty-ico">&#128197;</div>'
+                '<div class="empty-ttl">Không có dữ liệu ngày khám</div>'
+                '<div class="empty-dsc">Cột NGÀY KHÁM chưa có dữ liệu hoặc sai định dạng dd/mm/yyyy.</div>'
+                '</div>',
+                unsafe_allow_html=True
+            )
 
     # ════════════════
     # TAB 4 — NGUỒN BỆNH NHÂN
