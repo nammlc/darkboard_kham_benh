@@ -366,6 +366,22 @@ div[data-testid="stDownloadButton"] button {
     text-align:center; font-size:0.65rem; color:#94a3b8;
     padding:0.25rem 0; font-style:italic;
 }
+
+/* == FORCE LIGHT MODE — disable dark theme == */
+.stApp { background:#f0f4f8 !important; color:#1e293b !important; }
+[data-testid="stAppViewContainer"] { background:#f0f4f8 !important; }
+[data-testid="themeToggle"] { display:none !important; }
+button[kind="header"] { display:none !important; }
+.pt-card, .kc, .cc, .src-card, .upcoming-day,
+.empty, div[data-testid="stExpander"] {
+    background: white !important;
+}
+.pt-name, .kc-val, .sh-txt, .empty-ttl,
+.src-card-val { color: #0f172a !important; }
+.kc-lbl, .kc-sub, .empty-dsc, .src-card-lbl,
+.src-card-sub { color: #94a3b8 !important; }
+.rtbl td { color: #1e293b !important; background: white !important; }
+.rtbl tr:nth-child(even) td { background: #f8fafc !important; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -648,32 +664,41 @@ def source_badge(src_val):
         return f'<span class="pt-tag src-other">👤 {s[:30]}</span>'
 
 def patient_card_html(row):
-    """Render a mobile-friendly patient card with source badge."""
-    name   = row.get(COL_NAME,"") or "—"
-    dt     = row.get(COL_EXAM_DATE,"") or "—"
-    spec   = row.get(COL_SPECIALTY,"") or "—"
-    doc    = row.get(COL_DOCTOR,"") or ""
+    name   = str(row.get(COL_NAME,"")      or "—")
+    dt     = str(row.get(COL_EXAM_DATE,"") or "—")
+    spec   = str(row.get(COL_SPECIALTY,"") or "—")
+    doc    = str(row.get(COL_DOCTOR,"")    or "")
     status = str(row.get(COL_STATUS,""))
-    ts     = row.get(COL_TIMESTAMP,"") or ""
-    src    = row.get(COL_SOURCE,"") or ""
-    status_cls = ("pt-status-att" if STATUS_ATTENDED.upper() in status.upper()
-                  else "pt-status-nos" if status.strip() else "pt-status-oth")
-    doc_tag = f'<span class="pt-tag pt-tag-doc">👨‍⚕️ {doc[:25]}</span>' if doc.strip() else ""
-    src_tag = source_badge(src)
-    ts_row  = f'<div style="font-size:0.62rem;color:#94a3b8;margin-top:0.15rem">🕐 {ts}</div>' if ts else ""
-    return f"""<div class="pt-card">
-      <div class="pt-name">{name}</div>
-      <div class="pt-row">
-        <span class="pt-tag pt-tag-date">📅 {dt}</span>
-        <span class="pt-tag pt-tag-spec">🩺 {spec[:28]}</span>
-        {doc_tag}
-      </div>
-      <div class="pt-row">
-        <span class="pt-tag {status_cls}">{status or "—"}</span>
-        {src_tag}
-      </div>
-      {ts_row}
-    </div>"""
+    ts     = str(row.get(COL_TIMESTAMP,"") or "")
+    src    = str(row.get(COL_SOURCE,"")    or "")
+
+    if STATUS_ATTENDED.upper() in status.upper():
+        st_cls = "pt-status-att"
+    elif status.strip():
+        st_cls = "pt-status-nos"
+    else:
+        st_cls = "pt-status-oth"
+
+    doc_html = '<span class="pt-tag pt-tag-doc">' + doc[:25] + '</span>' if doc.strip() else ""
+    src_html = source_badge(src)
+    ts_html  = '<div style="font-size:0.62rem;color:#94a3b8;margin-top:0.12rem">&#128336; ' + ts + '</div>' if ts.strip() else ""
+
+    return (
+        '<div class="pt-card">'
+        + '<div class="pt-name">' + name + '</div>'
+        + '<div class="pt-row">'
+        + '<span class="pt-tag pt-tag-date">&#128197; ' + dt + '</span>'
+        + ' <span class="pt-tag pt-tag-spec">&#129658; ' + spec[:28] + '</span>'
+        + (' ' + doc_html if doc_html else '')
+        + '</div>'
+        + '<div class="pt-row">'
+        + '<span class="pt-tag ' + st_cls + '">' + (status or "—") + '</span>'
+        + (' ' + src_html if src_html else '')
+        + '</div>'
+        + ts_html
+        + '</div>'
+    )
+
 
 # ═══════════════════════════════════════════════
 # SESSION + FETCH
