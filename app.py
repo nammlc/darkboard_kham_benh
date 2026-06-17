@@ -8,7 +8,8 @@ import pandas as pd
 import plotly.graph_objects as go
 import gspread
 from google.oauth2.service_account import Credentials
-import json, os
+import json, os, re
+import openpyxl
 from datetime import datetime, timedelta, date
 
 SHEET_ID        = "1EYiRA3ar41aue8DlbWA7JTKoLL0M2tiLTcZINhdMfTs"
@@ -26,6 +27,10 @@ COL_BIRTH_YEAR  = "NĂM SINH"
 COL_EXAM_TIME   = "GIỜ KHÁM DỰ KIẾN"
 STATUS_ATTENDED = "BỆNH NHÂN ĐÃ KHÁM"
 SCOPES = [
+    "https://www.googleapis.com/auth/spreadsheets",
+    "https://www.googleapis.com/auth/drive",
+]
+SCOPES_RO = [
     "https://www.googleapis.com/auth/spreadsheets.readonly",
     "https://www.googleapis.com/auth/drive.readonly",
 ]
@@ -555,6 +560,292 @@ def authenticate(src):
         creds = Credentials.from_service_account_info(src, scopes=SCOPES)
     return gspread.authorize(creds)
 
+def authenticate_rw(src):
+    """Authenticate with WRITE scope for importing data."""
+    if isinstance(src, str):
+        creds = Credentials.from_service_account_file(src, scopes=SCOPES)
+    else:
+        creds = Credentials.from_service_account_info(src, scopes=SCOPES)
+    return gspread.authorize(creds)
+
+
+def parse_minh_lo_excel(uploaded_file):
+    """
+    Parse Minh Lo HIS Excel export (DANH SÁCH BỆNH NHÂN HẸN KHÁM LẠI).
+    Handles merged cells — one patient spans multiple rows.
+    Returns list of dicts with cleaned fields.
+    """
+    import zipfile, xml.etree.ElementTree as ET
+    from openpyxl import load_workbook
+    from openpyxl.utils import get_column_letter
+    import math
+
+    # Try openpyxl first (handles merged cells properly)
+    try:
+        wb = load_workbook(uploaded_file, data_only=True)
+        ws = wb.active
+
+        # Unmerge by filling merged regions with their values
+        merged_ranges = list(ws.merged_cells.ranges)
+        for merge in merged_ranges:
+            min_row, min_col = merge.min_row, merge.min_col
+            top_val = ws.cell(min_row, min_col).value
+            ws.unmerge_cells(str(merge))
+            for row in ws.iter_rows(min_row=merge.min_row, max_row=merge.max_row,
+                                     min_col=merge.min_col, max_col=merge.max_col):
+                for cell in row:
+                    if cell.value is None:
+                        cell.value = top_val
+
+        # Find header row (contains 'STT' and 'Mã y tế')
+        header_row = None
+        for i, row in enumerate(ws.iter_rows(values_only=True), 1):
+            row_vals = [str(v or '').strip() for v in row]
+            if 'STT' in row_vals and any('Mã' in v for v in row_vals):
+                header_row = i
+                break
+
+        if header_row is None:
+            return [], "Không tìm thấy hàng tiêu đề (STT, Mã y tế) trong file."
+
+        # Read headers
+        headers = [str(ws.cell(header_row, col).value or '').strip()
+                   for col in range(1, ws.max_column + 1)]
+
+        # Map column indices
+        def find_col(keywords):
+            for i, h in enumerate(headers):
+                h_clean = h.lower().replace('\n', ' ').replace('  ', ' ')
+                if any(k.lower() in h_clean for k in keywords):
+                    return i
+            return None
+
+        idx = {
+            'ma_yt':   find_col(['mã y tế', 'ma y te']),
+            'ho_ten':  find_col(['họ tên', 'ho ten', 'bệnh nhân']),
+            'tuoi_nam':find_col(['nam']),
+            'tuoi_nu': find_col(['nữ', 'nu']),
+            'dia_chi': find_col(['địa chỉ', 'dia chi']),
+            'bhyt':    find_col(['bhyt', 'thẻ bảo hiểm']),
+            'bac_sy':  find_col(['bác sỹ khám', 'bác sĩ khám']),
+            'trieu_chung': find_col(['triệu chứng', 'trieu chung']),
+            'chan_doan': find_col(['chẩn đoán', 'chan doan']),
+            'ngay_hen': find_col(['ngày hẹn', 'ngay hen']),
+            'ngay_lap': find_col(['ngày lập', 'ngay lap']),
+            'dt':      find_col(['điện thoại', 'dien thoai', 'sdt']),
+            'khoa_hen': find_col(['khoa hẹn', 'khoa hen']),
+            'bac_sy_hen': find_col(['bác sỹ hẹn', 'bác sĩ hẹn']),
+            'da_kham': find_col(['đã khám', 'da kham']),
+        }
+
+        def cell_val(row_vals, key):
+            i = idx.get(key)
+            if i is None or i >= len(row_vals): return ''
+            v = row_vals[i]
+            if v is None: return ''
+            return str(v).strip()
+
+        def parse_excel_date(val):
+            """Convert Excel serial number or string to dd/mm/yyyy."""
+            if not val or str(val).strip() in ('', 'None'): return ''
+            val = str(val).strip()
+            # Already formatted
+            if re.match(r'\d{1,2}/\d{1,2}/\d{4}', val): return val
+            if re.match(r'\d{4}-\d{2}-\d{2}', val):
+                dt = datetime.strptime(val[:10], '%Y-%m-%d')
+                return dt.strftime('%d/%m/%Y')
+            # Excel serial number
+            try:
+                serial = float(val)
+                if 40000 < serial < 60000:
+                    dt = datetime(1899, 12, 30) + timedelta(days=serial)
+                    return dt.strftime('%d/%m/%Y')
+            except:
+                pass
+            return val
+
+        def parse_time(val):
+            """Convert Excel time fraction to HH:MM."""
+            if not val or str(val).strip() in ('', 'None'): return ''
+            val = str(val).strip()
+            if re.match(r'\d{2}:\d{2}', val): return val[:5]
+            try:
+                frac = float(val)
+                if 0 < frac < 1:
+                    total_sec = int(frac * 86400)
+                    h = total_sec // 3600
+                    m = (total_sec % 3600) // 60
+                    return f"{h:02d}:{m:02d}"
+            except:
+                pass
+            return val
+
+        # Collect data rows — skip header + sub-headers
+        data_rows = []
+        skip_until = header_row + 2  # skip STT row and col-number row
+        for row in ws.iter_rows(min_row=skip_until, values_only=True):
+            vals = [str(v or '').strip() if v is not None else '' for v in row]
+            if not any(vals): continue  # skip empty rows
+
+            ma_yt = cell_val(vals, 'ma_yt')
+            ho_ten = cell_val(vals, 'ho_ten')
+            if not ma_yt and not ho_ten: continue
+            if ma_yt in ('Mã y tế', 'STT', '2', ''): continue
+
+            ngay_hen_raw = cell_val(vals, 'ngay_hen')
+            ngay_lap_raw = cell_val(vals, 'ngay_lap')
+
+            # Detect time suffix in ngay_hen (sometimes stored as datetime serial with time)
+            gio_hen = ''
+            ngay_hen = parse_excel_date(ngay_hen_raw)
+
+            # Try to extract time from ngay_lap if it has decimal
+            try:
+                serial = float(ngay_hen_raw)
+                if 40000 < serial < 60000:
+                    frac = serial - int(serial)
+                    if frac > 0:
+                        total_sec = int(frac * 86400)
+                        gio_hen = f"{total_sec//3600:02d}:{(total_sec%3600)//60:02d}"
+            except:
+                pass
+
+            # Tuổi → approximate birth year
+            tuoi_nam = cell_val(vals, 'tuoi_nam')
+            tuoi_nu  = cell_val(vals, 'tuoi_nu')
+            tuoi_val = tuoi_nam or tuoi_nu
+            nam_sinh = ''
+            if tuoi_val and re.match(r'\d+', tuoi_val):
+                try:
+                    age = int(re.findall(r'\d+', tuoi_val)[0])
+                    nam_sinh = str(datetime.now().year - age)
+                except:
+                    pass
+
+            data_rows.append({
+                'MÃ Y TẾ':              ma_yt,
+                'HỌ TÊN':               ho_ten,
+                'NĂM SINH (ước tính)':  nam_sinh,
+                'ĐỊA CHỈ':              cell_val(vals, 'dia_chi'),
+                'SỐ BHYT':              cell_val(vals, 'bhyt'),
+                'BÁC SĨ KHÁM':          cell_val(vals, 'bac_sy'),
+                'TRIỆU CHỨNG':          cell_val(vals, 'trieu_chung'),
+                'CHẨN ĐOÁN':            cell_val(vals, 'chan_doan'),
+                'NGÀY HẸN':             ngay_hen,
+                'GIỜ HẸN':              gio_hen,
+                'SỐ ĐIỆN THOẠI':        cell_val(vals, 'dt'),
+                'KHOA HẸN':             cell_val(vals, 'khoa_hen'),
+                'BÁC SĨ HẸN':           cell_val(vals, 'bac_sy_hen'),
+                'ĐÃ KHÁM':              cell_val(vals, 'da_kham'),
+            })
+
+        return data_rows, None
+
+    except Exception as e:
+        return [], f"Lỗi đọc file: {type(e).__name__}: {e}"
+
+
+# Full ordered column list of the Google Sheet (as of latest version)
+SHEET_COLUMNS = [
+    "THỜI GIAN ĐĂNG KÝ",                                              # A  - import timestamp
+    "TRẠNG THÁI",                                                      # B  - blank
+    "NGÀY KHÁM",                                                       # C  - Ngày hẹn
+    "1. HỌ VÀ TÊN BỆNH NHÂN",                                         # D  - Họ tên
+    "NĂM SINH",                                                        # E  - N/A
+    "2. ĐỊA CHỈ (THÔN/XÃ)",                                           # F  - Địa chỉ
+    "3. GIỚI TÍNH",                                                    # G  - N/A
+    "1. TRIỆU CHỨNG CHÍNH",                                            # H  - N/A
+    "5. SỐ ĐIÊN THOẠI",                                                # I  - Điện thoại
+    "4. SỐ CĂN CƯỚC CÔNG DÂN - CHỨNG MINH THƯ",                       # J  - N/A
+    "6. ĐỊA CHỈ",                                                      # K  - N/A
+    "CHUYÊN KHOA MONG MUỐN KHÁM",                                      # L  - fixed value
+    "BÁC SĨ MONG MUỐN ( nếu có)",                                      # M  - N/A
+    "GIỜ KHÁM DỰ KIẾN",                                                # N  - N/A
+    "1. CAM KẾT CÁC THÔNG TIN LÀ THÔNG TIN ĐÚNG, CHỊU TRÁCH NHIỆM TRƯỚC PHÁP LUẬT TRƯỚC NHỮNG THÔNG TIN ĐÃ CUNG CẤP TRÊN",  # O - CÓ
+    "ĐỒNG Ý CÁC ĐIỀU KHOẢN ĐẶT LỊCH KHÁM ONLINE TẠI BVĐK TÂM ĐỨC CẦU QUAN",  # P - CÓ
+    "NGUỒN BỆNH NHÂN",                                                 # Q  - fixed value
+    "KHOA KHÁM CHỮA BỆNH",                                             # R  - Khoa hẹn
+]
+
+def build_sheet_row(record, import_time_str):
+    """
+    Map one Minh Lo Excel record → one row matching SHEET_COLUMNS order.
+
+    Mapping rules:
+      - THỜI GIAN ĐĂNG KÝ         = thời gian import file
+      - TRẠNG THÁI                 = "" (trống)
+      - NGÀY KHÁM                  = NGÀY HẸN từ Excel
+      - 1. HỌ VÀ TÊN BỆNH NHÂN    = HỌ TÊN từ Excel
+      - NĂM SINH                   = N/A
+      - 2. ĐỊA CHỈ (THÔN/XÃ)      = ĐỊA CHỈ từ Excel
+      - 3. GIỚI TÍNH               = N/A
+      - 1. TRIỆU CHỨNG CHÍNH       = N/A
+      - 5. SỐ ĐIÊN THOẠI           = SỐ ĐIỆN THOẠI từ Excel
+      - 4. SỐ CĂN CƯỚC...          = N/A
+      - 6. ĐỊA CHỈ                 = N/A
+      - CHUYÊN KHOA MONG MUỐN      = "Other: Bệnh nhân điều trị nội khoa tái khám"
+      - BÁC SĨ MONG MUỐN           = N/A
+      - GIỜ KHÁM DỰ KIẾN           = N/A
+      - CAM KẾT...                 = "CÓ"
+      - ĐỒNG Ý...                  = "CÓ"
+      - NGUỒN BỆNH NHÂN            = "Bệnh nhân điều trị nội khoa tái khám"
+      - KHOA KHÁM CHỮA BỆNH        = KHOA HẸN từ Excel
+    """
+    return [
+        import_time_str,                                        # THỜI GIAN ĐĂNG KÝ
+        "",                                                     # TRẠNG THÁI (trống)
+        record.get("NGÀY HẸN", "N/A"),                         # NGÀY KHÁM
+        record.get("HỌ TÊN", "N/A"),                           # HỌ VÀ TÊN BỆNH NHÂN
+        "N/A",                                                  # NĂM SINH
+        record.get("ĐỊA CHỈ", "N/A"),                          # ĐỊA CHỈ (THÔN/XÃ)
+        "N/A",                                                  # GIỚI TÍNH
+        "N/A",                                                  # TRIỆU CHỨNG CHÍNH
+        record.get("SỐ ĐIỆN THOẠI", "N/A"),                    # SỐ ĐIÊN THOẠI
+        "N/A",                                                  # SỐ CĂN CƯỚC
+        "N/A",                                                  # ĐỊA CHỈ (6)
+        "Other: Bệnh nhân điều trị nội khoa tái khám",         # CHUYÊN KHOA
+        "N/A",                                                  # BÁC SĨ MONG MUỐN
+        "N/A",                                                  # GIỜ KHÁM DỰ KIẾN
+        "CÓ",                                                   # CAM KẾT
+        "CÓ",                                                   # ĐỒNG Ý
+        "Bệnh nhân điều trị nội khoa tái khám",                # NGUỒN BỆNH NHÂN
+        record.get("KHOA HẸN", "N/A"),                         # KHOA KHÁM CHỮA BỆNH
+    ]
+
+
+def push_to_sheet(creds_data, sheet_id, sheet_name, records):
+    """
+    Append parsed Minh Lo records into the MAIN Google Sheet tab,
+    mapping each field to the correct column position.
+    Returns (rows_written, error_msg)
+    """
+    try:
+        cl = authenticate_rw(creds_data)
+        ss = cl.open_by_key(sheet_id)
+        ws = ss.worksheet(sheet_name)
+
+        if not records:
+            return 0, "Không có dữ liệu để ghi."
+
+        # Get existing headers from sheet row 1 to verify column order
+        existing_headers = ws.row_values(1)
+
+        # Build timestamp once for whole import batch
+        import_time_str = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
+
+        # Build rows in sheet column order
+        rows_to_append = [build_sheet_row(r, import_time_str) for r in records]
+
+        # Append after last row (don't overwrite existing data)
+        ws.append_rows(rows_to_append, value_input_option="RAW",
+                       insert_data_option="INSERT_ROWS", table_range="A1")
+
+        return len(records), None
+
+    except Exception as e:
+        return 0, f"Lỗi ghi Sheet: {type(e).__name__}: {e}"
+
+
 def fetch_raw(client):
     ws = client.open_by_key(SHEET_ID).worksheet(SHEET_NAME)
     vals = ws.get_all_values()
@@ -814,13 +1105,14 @@ if st.session_state.metrics:
     """, unsafe_allow_html=True)
 
     # ── TABS ────────────────────────────────────
-    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+    tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
         "📊 Tổng Quan",
         "🔍 Tìm Theo Ngày",
         "📅 3 Ngày Tới",
         "🏥 Nguồn Bệnh Nhân",
         "📈 Báo Cáo",
         "👤 Bệnh Nhân",
+        "📥 Import Từ Minh Lộ",
     ])
 
     # ════════════════
@@ -1417,6 +1709,117 @@ if st.session_state.metrics:
             file_name=f"benhnhan_{datetime.now().strftime('%Y%m%d')}.csv",
             mime="text/csv",
         )
+
+    # ════════════════
+    # TAB 7 — IMPORT TỪ MINH LỘ
+    # ════════════════
+    with tab7:
+        st.markdown(
+            '<div class="sh"><div class="sh-dot" style="background:#10b981"></div>'
+            '<span class="sh-txt">Import Danh Sách Hẹn Khám Từ Phần Mềm Minh Lộ</span></div>',
+            unsafe_allow_html=True
+        )
+
+        # Info box
+        st.markdown("""
+        <div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:12px;
+                    padding:1rem 1.2rem;margin-bottom:1rem;font-size:0.83rem;color:#1e40af">
+          <b>📋 Hướng dẫn:</b><br>
+          1. Vào Minh Lộ → Báo cáo → <b>Danh sách bệnh nhân hẹn khám lại</b><br>
+          2. Chọn ngày cần xuất → Export ra <b>Excel (.xlsx)</b><br>
+          3. Upload file vào đây → Kiểm tra preview → Nhấn <b>Import vào Google Sheet</b><br>
+          4. Dữ liệu sẽ được <b>thêm vào sheet chính</b> với đầy đủ các trường đã mapping
+        </div>
+        <div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:12px;
+                    padding:0.8rem 1.2rem;margin-bottom:1rem;font-size:0.8rem;color:#166534">
+          <b>✅ Quy tắc mapping:</b>
+          Họ tên → HỌ VÀ TÊN &nbsp;|&nbsp; Địa chỉ → ĐỊA CHỈ &nbsp;|&nbsp;
+          Ngày hẹn → NGÀY KHÁM &nbsp;|&nbsp; Điện thoại → SỐ ĐIÊN THOẠI &nbsp;|&nbsp;
+          Khoa hẹn → KHOA KHÁM CHỮA BỆNH &nbsp;|&nbsp;
+          Nguồn BN → "Bệnh nhân điều trị nội khoa tái khám" &nbsp;|&nbsp;
+          Thời gian đăng ký → Thời điểm import &nbsp;|&nbsp;
+          Cam kết & Đồng ý → "CÓ"
+        </div>
+        """, unsafe_allow_html=True)
+
+        # Always write to main sheet tab
+        target_tab = SHEET_NAME
+
+        # File uploader
+        xl_file = st.file_uploader(
+            "Upload file Excel từ Minh Lộ (.xlsx)",
+            type=["xlsx"],
+            help="File xuất từ màn hình Danh sách bệnh nhân hẹn khám lại"
+        )
+
+        if xl_file is not None:
+            with st.spinner("Đang đọc file Excel…"):
+                records, err_parse = parse_minh_lo_excel(xl_file)
+
+            if err_parse:
+                st.error(f"❌ {err_parse}")
+            elif not records:
+                st.warning("⚠️ Không tìm thấy dữ liệu bệnh nhân trong file. Kiểm tra lại định dạng file.")
+            else:
+                st.success(f"✅ Đọc được **{len(records)}** bệnh nhân từ file Excel")
+
+                # Preview table
+                st.markdown(
+                    '<div class="sh"><div class="sh-dot" style="background:#3b82f6"></div>'
+                    '<span class="sh-txt">Xem Trước Dữ Liệu (10 bệnh nhân đầu)</span></div>',
+                    unsafe_allow_html=True
+                )
+                preview_df = pd.DataFrame(records[:10])
+                st.dataframe(preview_df, use_container_width=True, hide_index=True, height=280)
+
+                # Stats
+                ngay_hen_list = [r["NGÀY HẸN"] for r in records if r.get("NGÀY HẸN")]
+                ngay_set = set(ngay_hen_list)
+                st.markdown(f"""
+                <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:0.6rem;margin:0.8rem 0">
+                  <div class="kc kc-b" style="padding:0.8rem 1rem">
+                    <div class="kc-lbl">Tổng Bệnh Nhân</div>
+                    <div class="kc-val" style="font-size:1.6rem">{len(records)}</div>
+                  </div>
+                  <div class="kc kc-g" style="padding:0.8rem 1rem">
+                    <div class="kc-lbl">Số Ngày Hẹn</div>
+                    <div class="kc-val" style="font-size:1.6rem">{len(ngay_set)}</div>
+                  </div>
+                  <div class="kc kc-v" style="padding:0.8rem 1rem">
+                    <div class="kc-lbl">Chưa Khám</div>
+                    <div class="kc-val" style="font-size:1.6rem">{sum(1 for r in records if "chưa" in r.get("ĐÃ KHÁM","").lower())}</div>
+                  </div>
+                </div>
+                """, unsafe_allow_html=True)
+
+                col_imp1, col_imp2 = st.columns([1, 1])
+                with col_imp1:
+                    # Download as CSV (no Google Sheet needed)
+                    csv_imp = pd.DataFrame(records).to_csv(index=False, encoding="utf-8-sig")
+                    st.download_button(
+                        label="⬇️ Tải CSV (không cần Sheet)",
+                        data=csv_imp.encode("utf-8-sig"),
+                        file_name=f"henkham_minhloc_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
+                        mime="text/csv",
+                    )
+                with col_imp2:
+                    if st.button("📤 Import vào Google Sheet", use_container_width=True):
+                        if not creds_data:
+                            st.error("❌ Chưa có credentials. Kiểm tra Streamlit Secrets.")
+                        else:
+                            with st.spinner(f"Đang ghi {len(records)} bệnh nhân vào Sheet…"):
+                                rows_ok, err_push = push_to_sheet(
+                                    creds_data, SHEET_ID, SHEET_NAME, records
+                                )
+                            if err_push:
+                                st.error(f"❌ {err_push}")
+                                st.info("💡 Nếu lỗi Permission: vào Google Sheet → Share → đổi Service Account từ Viewer thành Editor.")
+                            else:
+                                st.success(f"✅ Đã thêm thành công **{rows_ok}** dòng vào sheet chính!")
+                                st.info("🔄 Quay lại tab **📊 Tổng Quan** và nhấn **Làm mới** để xem dữ liệu mới.")
+                                st.balloons()
+                                # Invalidate cache so next refresh loads new data
+                                st.session_state.metrics = None
 
 else:
     if not st.session_state.err:
