@@ -991,6 +991,20 @@ if st.session_state.metrics:
         df_upcoming = m.get("df_full", df)
 
         if "_date" in df_upcoming.columns and df_upcoming["_date"].notna().any():
+            # Tổng số bệnh nhân trong cả 3 ngày tới — hiển thị rõ để dễ kiểm chứng
+            # không bị thiếu, dù có bao nhiêu bệnh nhân đăng ký (100, 200,...).
+            total_upcoming_all = sum(
+                int((df_upcoming["_date"].dt.date == udate).sum()) for udate in upcoming_dates
+            )
+            st.markdown(
+                '<div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:10px;'
+                'padding:0.7rem 1rem;margin-bottom:0.8rem;text-align:center;color:#1d4ed8">'
+                '&#128203; Tổng cộng <span style="font-size:1.2rem;font-weight:800">'
+                + str(total_upcoming_all) +
+                '</span> bệnh nhân đăng ký khám trong 3 ngày tới</div>',
+                unsafe_allow_html=True
+            )
+
             for udate in upcoming_dates:
                 day_df = df_upcoming[df_upcoming["_date"].dt.date == udate].copy()
                 count  = len(day_df)
