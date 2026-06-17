@@ -594,7 +594,10 @@ def parse_minh_lo_excel(uploaded_file):
                 raw = f.read()
 
         zf = zipfile.ZipFile(io.BytesIO(raw))
-        names_lower = {n.lower(): n for n in zf.namelist()}
+        # Một số phần mềm (vd. Minh Lộ HIS) nén zip với dấu '\' thay vì '/'
+        # trong tên đường dẫn nội bộ (không đúng chuẩn zip nhưng vẫn mở được).
+        # Chuẩn hoá về '/' để so khớp đúng "worksheets/sheet1", "sharedstrings"...
+        names_lower = {n.lower().replace("\\", "/"): n for n in zf.namelist()}
 
         # ── Shared strings (optional — some xlsx have none) ──
         shared = []
@@ -741,27 +744,57 @@ def parse_minh_lo_excel(uploaded_file):
                 pass
             return val
 
-        # ── Data rows: skip header + 2 sub-header rows ──
+        # ── Locate the STT (sequential number) column ──
+        stt_col = headers.index("stt") if "stt" in headers else 0
+
+        def has_letter(s):
+            return bool(re.search(r"[^\W\d_]", str(s), re.UNICODE))
+
+        # ── Detect the start row of each patient block ──
+        # Minh Lộ exports wrap long fields (Họ tên, Địa chỉ, Chỉ định điều
+        # trị…) across SEVERAL physical Excel rows per patient (not just one
+        # row each). A row is the START of a new patient block when its STT
+        # cell is a plain number AND its "Họ tên" cell contains a real name
+        # (i.e. has letters) — this also filters out junk "column index"
+        # rows some exports insert right after the header (a row that just
+        # reads 1, 2, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13… under each column).
+        start_rows = []
+        for r in range(header_row_idx + 1, max_row + 1):
+            row_vals = get_row(r)
+            stt_val = str(row_vals[stt_col]).strip() if stt_col < len(row_vals) else ""
+            ho_ten_val = cv(row_vals, "ho_ten")
+            if stt_val.isdigit() and has_letter(ho_ten_val):
+                start_rows.append(r)
+
+        # Fallback for a different report layout: if no block-start row was
+        # detected this way, treat every non-empty row as its own record
+        # (old behaviour) so we never silently return zero results.
+        if not start_rows:
+            start_rows = [
+                r for r in range(header_row_idx + 1, max_row + 1)
+                if any(str(v).strip() for v in get_row(r))
+            ]
+
+        def join_field(r0, r1, key):
+            """Rebuild a long field by concatenating its fragment from
+            every physical row of the block, in order (the exporter splits
+            the text mid-word/mid-syllable, so plain concatenation —
+            no separator — reconstructs the original value)."""
+            return "".join(cv(get_row(r), key) for r in range(r0, r1 + 1)).strip()
+
         data_rows = []
-        prev_row = {}   # last non-empty values for fill-down on merged cells
-        for r in range(header_row_idx + 3, max_row + 1):
-            vals = get_row(r)
-            if not any(str(v).strip() for v in vals):
-                continue
+        for i, r0 in enumerate(start_rows):
+            r1 = (start_rows[i + 1] - 1) if i + 1 < len(start_rows) else max_row
+            vals0 = get_row(r0)
 
-            ma_yt  = cv(vals, "ma_yt")
-            ho_ten = cv(vals, "ho_ten")
+            ma_yt   = cv(vals0, "ma_yt")
+            ho_ten  = join_field(r0, r1, "ho_ten")
+            dia_chi = join_field(r0, r1, "dia_chi")
 
-            # Skip sub-header rows and pure-empty rows
-            if ma_yt.lower() in ("stt", "mã y tế", "2", "") and not ho_ten:
-                continue
-
-            # Fill-down: if ma_yt empty but we have a previous context, skip
-            # (these are continuation rows for chỉ định điều trị)
             if not ma_yt and not ho_ten:
                 continue
 
-            ngay_raw = cv(vals, "ngay_hen")
+            ngay_raw = cv(vals0, "ngay_hen")
             gio_hen  = ""
             try:
                 s = float(ngay_raw)
@@ -773,7 +806,7 @@ def parse_minh_lo_excel(uploaded_file):
             except Exception:
                 pass
 
-            tuoi_val = cv(vals, "tuoi_nam") or cv(vals, "tuoi_nu")
+            tuoi_val = cv(vals0, "tuoi_nam") or cv(vals0, "tuoi_nu")
             nam_sinh = ""
             if re.search(r"\d+", tuoi_val):
                 try:
@@ -787,17 +820,17 @@ def parse_minh_lo_excel(uploaded_file):
                 "MÃ Y TẾ":             ma_yt,
                 "HỌ TÊN":              ho_ten,
                 "NĂM SINH (ước tính)": nam_sinh,
-                "ĐỊA CHỈ":             cv(vals, "dia_chi"),
-                "SỐ BHYT":             cv(vals, "bhyt"),
-                "BÁC SĨ KHÁM":         cv(vals, "bac_sy"),
-                "TRIỆU CHỨNG":         cv(vals, "trieu_chung"),
-                "CHẨN ĐOÁN":           cv(vals, "chan_doan"),
+                "ĐỊA CHỈ":             dia_chi,
+                "SỐ BHYT":             cv(vals0, "bhyt"),
+                "BÁC SĨ KHÁM":         cv(vals0, "bac_sy"),
+                "TRIỆU CHỨNG":         cv(vals0, "trieu_chung"),
+                "CHẨN ĐOÁN":           cv(vals0, "chan_doan"),
                 "NGÀY HẸN":            to_date(ngay_raw),
                 "GIỜ HẸN":             gio_hen,
-                "SỐ ĐIỆN THOẠI":       cv(vals, "dt"),
-                "KHOA HẸN":            cv(vals, "khoa_hen"),
-                "BÁC SĨ HẸN":          cv(vals, "bac_sy_hen"),
-                "ĐÃ KHÁM":             cv(vals, "da_kham"),
+                "SỐ ĐIỆN THOẠI":       cv(vals0, "dt"),
+                "KHOA HẸN":            cv(vals0, "khoa_hen"),
+                "BÁC SĨ HẸN":          cv(vals0, "bac_sy_hen"),
+                "ĐÃ KHÁM":             cv(vals0, "da_kham"),
             })
 
         return data_rows, None
