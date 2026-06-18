@@ -900,10 +900,10 @@ def build_sheet_row(record, import_time_str):
       Q - ĐỒNG Ý...                = "CÓ"
 
     Lưu ý:
-      - Ngày khám: prefix "'" để Google Sheet KHÔNG tự convert sang date
-        (tránh lệch cột và dấu apostrophe hiển thị). Dùng RAW mode.
+      - Ngày khám: ghi dạng số serial Google Sheets (push_to_sheet xử lý convert),
+        Google Sheet tự hiển thị đúng format Date, không có dấu apostrophe.
       - Số điện thoại: ghi dạng string (đã có số 0 đầu từ _fix_phone).
-      - Trạng thái: để trống — người dùng chọn dropdown thủ công.
+      - Trạng thái: mặc định "Bệnh nhân chưa khám/bỏ khám" (khớp dropdown).
     """
     # Format ngày: đảm bảo dd/mm/yyyy, nếu không có thì để N/A
     ngay_kham = record.get("NGÀY HẸN", "N/A") or "N/A"
@@ -911,8 +911,8 @@ def build_sheet_row(record, import_time_str):
     return [
         import_time_str,                                        # A - Dấu thời gian
         "Bệnh nhân điều trị nội khoa tái khám",                # B - NGUỒN BỆNH NHÂN
-        "",                                                     # C - TRẠNG THÁI (trống, chọn dropdown thủ công)
-        ngay_kham,                                              # D - NGÀY KHÁM (plain text dd/mm/yyyy)
+        "Bệnh nhân chưa khám/bỏ khám",                         # C - TRẠNG THÁI (mặc định dropdown)
+        ngay_kham,                                              # D - NGÀY KHÁM (serial được convert trong push_to_sheet)
         record.get("HỌ TÊN", "N/A"),                           # E - HỌ VÀ TÊN BỆNH NHÂN
         "N/A",                                                  # F - NĂM SINH
         record.get("SỐ ĐIỆN THOẠI", "N/A"),                    # G - SỐ ĐIÊN THOẠI
@@ -943,21 +943,48 @@ def push_to_sheet(creds_data, sheet_id, sheet_name, records):
         if not records:
             return 0, "Không có dữ liệu để ghi."
 
-        # Get existing headers from sheet row 1 to verify column order
-        existing_headers = ws.row_values(1)
-
         # Build timestamp once for whole import batch
         import_time_str = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
 
         # Build rows in sheet column order
         rows_to_append = [build_sheet_row(r, import_time_str) for r in records]
 
-        # Append after last row (don't overwrite existing data)
-        # Dùng RAW để Google Sheet KHÔNG tự convert chuỗi ngày dd/mm/yyyy
-        # thành date object (gây ra dấu ' ở đầu ô). Dropdown vẫn hoạt động
-        # bình thường vì validation không phụ thuộc value_input_option.
-        ws.append_rows(rows_to_append, value_input_option="RAW",
-                       insert_data_option="INSERT_ROWS", table_range="A1")
+        # ── Tìm dòng trống đầu tiên để append ──
+        all_vals = ws.get_all_values()
+        next_row = len(all_vals) + 1  # 1-indexed, dòng đầu tiên trống
+
+        # ── Chuyển chuỗi ngày dd/mm/yyyy → số serial Google Sheets ──
+        # Cột D (index 3) chứa NGÀY KHÁM. Cột NGÀY KHÁM có format Date trong
+        # sheet nên phải ghi bằng số serial (không phải text) để tránh dấu '.
+        # Google Sheets serial = số ngày kể từ 30/12/1899.
+        DATE_COL_IDX = 3  # cột D, 0-indexed
+
+        def date_str_to_serial(s):
+            """Chuyển 'dd/mm/yyyy' → số serial Google Sheets (float).
+            Trả về chuỗi gốc nếu không parse được."""
+            try:
+                d = datetime.strptime(s.strip(), "%d/%m/%Y")
+                delta = d - datetime(1899, 12, 30)
+                return delta.days  # số nguyên, Google Sheets tự hiểu là Date
+            except Exception:
+                return s  # giữ nguyên nếu không parse được
+
+        # Chuyển đổi ngày trong từng row
+        converted_rows = []
+        for row in rows_to_append:
+            row = list(row)
+            row[DATE_COL_IDX] = date_str_to_serial(str(row[DATE_COL_IDX]))
+            converted_rows.append(row)
+
+        # ── Ghi bằng Sheets API với USER_ENTERED ──
+        # USER_ENTERED: Google Sheet nhận số serial → tự hiển thị đúng định dạng Date
+        # Dropdown (TRẠNG THÁI) hoạt động vì giá trị khớp với list validation
+        ws.append_rows(
+            converted_rows,
+            value_input_option="USER_ENTERED",
+            insert_data_option="INSERT_ROWS",
+            table_range="A1",
+        )
 
         return len(records), None
 
