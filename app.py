@@ -569,6 +569,21 @@ def authenticate_rw(src):
     return gspread.authorize(creds)
 
 
+def _fix_phone(raw: str) -> str:
+    """Chuẩn hoá số điện thoại từ Excel:
+    - Loại bỏ khoảng trắng, dấu chấm, dấu gạch ngang
+    - Nếu số có 9 chữ số (Excel tự bỏ số 0 đầu) → thêm lại '0'
+    - Nếu đã có 10 chữ số hoặc rỗng → giữ nguyên
+    """
+    phone = re.sub(r"[\s.\-]", "", str(raw).strip())
+    if not phone or phone.lower() in ("n/a", "none", ""):
+        return "N/A"
+    digits = re.sub(r"\D", "", phone)
+    if len(digits) == 9:
+        digits = "0" + digits
+    return digits if digits else "N/A"
+
+
 def parse_minh_lo_excel(uploaded_file):
     """
     Parse Minh Lo HIS Excel export using direct XML parsing.
@@ -776,11 +791,12 @@ def parse_minh_lo_excel(uploaded_file):
             ]
 
         def join_field(r0, r1, key):
-            """Rebuild a long field by concatenating its fragment from
-            every physical row of the block, in order (the exporter splits
-            the text mid-word/mid-syllable, so plain concatenation —
-            no separator — reconstructs the original value)."""
-            return "".join(cv(get_row(r), key) for r in range(r0, r1 + 1)).strip()
+            """Rebuild a long field spanning multiple physical rows.
+            Minh Lộ splits tên bệnh nhân across rows (e.g. 'NGUYỄN' /
+            ' THỊ' / ' PHƯƠNG'), join with space then collapse extras."""
+            parts = [cv(get_row(r), key).strip() for r in range(r0, r1 + 1)]
+            joined = " ".join(p for p in parts if p)
+            return re.sub(r"\s+", " ", joined).strip()
 
         data_rows = []
         for i, r0 in enumerate(start_rows):
@@ -827,7 +843,7 @@ def parse_minh_lo_excel(uploaded_file):
                 "CHẨN ĐOÁN":           cv(vals0, "chan_doan"),
                 "NGÀY HẸN":            to_date(ngay_raw),
                 "GIỜ HẸN":             gio_hen,
-                "SỐ ĐIỆN THOẠI":       cv(vals0, "dt"),
+                "SỐ ĐIỆN THOẠI":       _fix_phone(cv(vals0, "dt")),
                 "KHOA HẸN":            cv(vals0, "khoa_hen"),
                 "BÁC SĨ HẸN":          cv(vals0, "bac_sy_hen"),
                 "ĐÃ KHÁM":             cv(vals0, "da_kham"),
@@ -868,7 +884,7 @@ def build_sheet_row(record, import_time_str):
       A - Dấu thời gian            = thời gian import file
       B - NGUỒN BỆNH NHÂN          = "Bệnh nhân điều trị nội khoa tái khám"
       C - TRẠNG THÁI               = "" (trống)
-      D - NGÀY KHÁM                = NGÀY HẸN từ Excel
+      D - NGÀY KHÁM                = NGÀY HẸN từ Excel (dd/mm/yyyy)
       E - 1. HỌ VÀ TÊN BỆNH NHÂN  = HỌ TÊN từ Excel
       F - NĂM SINH                 = N/A
       G - 5. SỐ ĐIÊN THOẠI         = SỐ ĐIỆN THOẠI từ Excel
@@ -882,12 +898,21 @@ def build_sheet_row(record, import_time_str):
       O - GIỜ KHÁM DỰ KIẾN         = N/A
       P - CAM KẾT...               = "CÓ"
       Q - ĐỒNG Ý...                = "CÓ"
+
+    Lưu ý:
+      - Ngày khám: prefix "'" để Google Sheet KHÔNG tự convert sang date
+        (tránh lệch cột và dấu apostrophe hiển thị). Dùng RAW mode.
+      - Số điện thoại: ghi dạng string (đã có số 0 đầu từ _fix_phone).
+      - Trạng thái: để trống — người dùng chọn dropdown thủ công.
     """
+    # Format ngày: đảm bảo dd/mm/yyyy, nếu không có thì để N/A
+    ngay_kham = record.get("NGÀY HẸN", "N/A") or "N/A"
+
     return [
         import_time_str,                                        # A - Dấu thời gian
         "Bệnh nhân điều trị nội khoa tái khám",                # B - NGUỒN BỆNH NHÂN
-        "",                                                     # C - TRẠNG THÁI (trống)
-        record.get("NGÀY HẸN", "N/A"),                         # D - NGÀY KHÁM
+        "",                                                     # C - TRẠNG THÁI (trống, chọn dropdown thủ công)
+        ngay_kham,                                              # D - NGÀY KHÁM (plain text dd/mm/yyyy)
         record.get("HỌ TÊN", "N/A"),                           # E - HỌ VÀ TÊN BỆNH NHÂN
         "N/A",                                                  # F - NĂM SINH
         record.get("SỐ ĐIỆN THOẠI", "N/A"),                    # G - SỐ ĐIÊN THOẠI
@@ -928,6 +953,9 @@ def push_to_sheet(creds_data, sheet_id, sheet_name, records):
         rows_to_append = [build_sheet_row(r, import_time_str) for r in records]
 
         # Append after last row (don't overwrite existing data)
+        # Dùng RAW để Google Sheet KHÔNG tự convert chuỗi ngày dd/mm/yyyy
+        # thành date object (gây ra dấu ' ở đầu ô). Dropdown vẫn hoạt động
+        # bình thường vì validation không phụ thuộc value_input_option.
         ws.append_rows(rows_to_append, value_input_option="RAW",
                        insert_data_option="INSERT_ROWS", table_range="A1")
 
