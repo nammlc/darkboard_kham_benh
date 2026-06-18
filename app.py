@@ -25,6 +25,7 @@ COL_SOURCE      = "NGUỒN BỆNH NHÂN"
 COL_PHONE       = "5. SỐ ĐIÊN THOẠI"
 COL_BIRTH_YEAR  = "NĂM SINH"
 COL_EXAM_TIME   = "GIỜ KHÁM DỰ KIẾN"
+COL_KHOA        = "KHOA KHÁM CHỮA BỆNH"
 STATUS_ATTENDED = "BỆNH NHÂN ĐÃ KHÁM"
 SCOPES = [
     "https://www.googleapis.com/auth/spreadsheets",
@@ -1699,6 +1700,148 @@ if st.session_state.metrics:
                     file_name=f"taikham_{datetime.now().strftime('%Y%m%d')}.csv",
                     mime="text/csv",
                 )
+
+            # ── Thống kê theo KHOA KHÁM CHỮA BỆNH ──
+            if COL_KHOA in df.columns:
+                st.markdown(
+                    f'<div class="sh"><div class="sh-dot" style="background:{CT}"></div>'
+                    f'<span class="sh-txt">Thống Kê Tái Khám Theo Khoa</span></div>',
+                    unsafe_allow_html=True
+                )
+
+                # Chỉ lấy bệnh nhân tái khám (có nguồn từ khoa)
+                noi_df_khoa = df[
+                    df[COL_SOURCE].astype(str).str.contains(
+                        "khoa|tái|nội trú|xuất viện|tai|nội khoa", case=False, na=False
+                    )
+                ].copy() if COL_SOURCE in df.columns else df.copy()
+
+                khoa_raw = noi_df_khoa[COL_KHOA].astype(str).str.strip()
+                khoa_raw = khoa_raw[khoa_raw.str.len() > 0]
+                khoa_raw = khoa_raw[~khoa_raw.str.lower().isin(["", "nan", "n/a", "na"])]
+
+                if not khoa_raw.empty:
+                    khoa_counts = khoa_raw.value_counts().reset_index()
+                    khoa_counts.columns = ["Khoa", "Số lượt"]
+                    khoa_counts["Tỷ lệ"] = (
+                        khoa_counts["Số lượt"] / khoa_counts["Số lượt"].sum() * 100
+                    ).round(1)
+
+                    # Bộ lọc khoa
+                    all_khoa = ["Tất cả khoa"] + khoa_counts["Khoa"].tolist()
+                    sel_khoa = st.selectbox(
+                        "🔍 Lọc theo khoa:",
+                        all_khoa,
+                        label_visibility="visible",
+                        key="sel_khoa_filter"
+                    )
+
+                    # ── Biểu đồ bar ngang ──
+                    st.markdown('<div class="cc">', unsafe_allow_html=True)
+                    fig_khoa = go.Figure(go.Bar(
+                        x=khoa_counts["Số lượt"],
+                        y=khoa_counts["Khoa"],
+                        orientation="h",
+                        marker=dict(
+                            color=[CV if sel_khoa != "Tất cả khoa" and k == sel_khoa else CT
+                                   for k in khoa_counts["Khoa"]],
+                            opacity=0.85,
+                        ),
+                        text=[f"{v} ({p}%)" for v, p in
+                              zip(khoa_counts["Số lượt"], khoa_counts["Tỷ lệ"])],
+                        textposition="outside",
+                        hovertemplate="<b>%{y}</b><br>Số lượt: %{x}<extra></extra>",
+                    ))
+                    fig_khoa.update_layout(
+                        height=max(220, len(khoa_counts) * 48),
+                        margin=dict(t=10, b=10, l=8, r=90),
+                        xaxis=dict(
+                            showgrid=True, gridcolor="#f1f5f9",
+                            zeroline=False, tickfont=dict(size=9, color="#64748b"),
+                        ),
+                        yaxis=dict(
+                            autorange="reversed",
+                            tickfont=dict(size=10, color="#1e293b"),
+                            showgrid=False,
+                        ),
+                        plot_bgcolor="white", paper_bgcolor="white",
+                        font=dict(family="Inter, sans-serif"),
+                    )
+                    st.plotly_chart(fig_khoa, use_container_width=True,
+                                    config={"displayModeBar": False})
+                    st.markdown('</div>', unsafe_allow_html=True)
+
+                    # ── Bảng chi tiết + lọc ──
+                    st.markdown(
+                        f'<div class="sh"><div class="sh-dot" style="background:{CT}"></div>'
+                        f'<span class="sh-txt">Chi Tiết Bệnh Nhân'
+                        f'{" — " + sel_khoa if sel_khoa != "Tất cả khoa" else " — Tất Cả Khoa"}'
+                        f'</span></div>',
+                        unsafe_allow_html=True
+                    )
+
+                    # Lọc df theo khoa
+                    if sel_khoa == "Tất cả khoa":
+                        filtered_khoa_df = noi_df_khoa[
+                            noi_df_khoa[COL_KHOA].astype(str).str.strip()
+                            .isin(khoa_counts["Khoa"].tolist())
+                        ]
+                    else:
+                        filtered_khoa_df = noi_df_khoa[
+                            noi_df_khoa[COL_KHOA].astype(str).str.strip() == sel_khoa
+                        ]
+
+                    # KPI mini cho khoa được chọn
+                    fk_total = len(filtered_khoa_df)
+                    fk_att = int(
+                        (filtered_khoa_df[COL_STATUS].str.upper() == STATUS_ATTENDED.upper()).sum()
+                    ) if COL_STATUS in filtered_khoa_df.columns else 0
+                    fk_nos = fk_total - fk_att
+                    fk_pct = round(fk_att / fk_total * 100, 1) if fk_total > 0 else 0
+
+                    st.markdown(f"""
+                    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:0.5rem;margin:0.6rem 0 0.9rem">
+                      <div class="kc kc-t" style="padding:0.7rem 0.9rem">
+                        <div class="kc-lbl">Tổng Lượt</div>
+                        <div class="kc-val" style="font-size:1.5rem">{fk_total}</div>
+                      </div>
+                      <div class="kc kc-g" style="padding:0.7rem 0.9rem">
+                        <div class="kc-lbl">Đã Đến Khám</div>
+                        <div class="kc-val" style="font-size:1.5rem;color:#059669">{fk_att}</div>
+                      </div>
+                      <div class="kc kc-r" style="padding:0.7rem 0.9rem">
+                        <div class="kc-lbl">Vắng / Chưa</div>
+                        <div class="kc-val" style="font-size:1.5rem;color:#dc2626">{fk_nos}</div>
+                      </div>
+                    </div>
+                    """, unsafe_allow_html=True)
+
+                    # Danh sách bệnh nhân theo khoa
+                    show_khoa_cols = [col for col in [
+                        COL_NAME, COL_EXAM_DATE, COL_STATUS,
+                        COL_KHOA, COL_PHONE, COL_SOURCE
+                    ] if col in filtered_khoa_df.columns]
+
+                    MAX_KHOA = 50
+                    cards_khoa = "".join(
+                        patient_card_html(row)
+                        for _, row in filtered_khoa_df[show_khoa_cols].head(MAX_KHOA).iterrows()
+                    )
+                    st.markdown(cards_khoa, unsafe_allow_html=True)
+                    if len(filtered_khoa_df) > MAX_KHOA:
+                        st.info(f"Hiển thị {MAX_KHOA}/{len(filtered_khoa_df)} bệnh nhân. Tải CSV để xem đầy đủ.")
+
+                    khoa_fname = sel_khoa.replace(" ", "_") if sel_khoa != "Tất cả khoa" else "tat_ca_khoa"
+                    csv_khoa = filtered_khoa_df[show_khoa_cols].to_csv(index=False, encoding="utf-8-sig")
+                    st.download_button(
+                        label=f"⬇️ Tải danh sách {sel_khoa} (.csv)",
+                        data=csv_khoa.encode("utf-8-sig"),
+                        file_name=f"taikham_{khoa_fname}_{datetime.now().strftime('%Y%m%d')}.csv",
+                        mime="text/csv",
+                        key="dl_khoa_csv",
+                    )
+                else:
+                    st.info("Chưa có dữ liệu cột KHOA KHÁM CHỮA BỆNH cho bệnh nhân tái khám.")
         else:
             st.markdown("""<div class="empty">
               <div class="empty-ico">📭</div>
