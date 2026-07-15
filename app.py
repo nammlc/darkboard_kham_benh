@@ -424,7 +424,7 @@ div[data-testid="stDownloadButton"] button {
     padding:0.25rem 0; font-style:italic;
 }
 
-/* ── PAGINATION ── */
+/* ── PAGINATION (kiểu viên thuốc bo tròn, tách biệt trang hiện tại) ── */
 .pg-info {
     text-align:center; font-size:0.72rem; color:#64748b;
     margin:0.5rem 0 0.35rem; font-weight:500;
@@ -433,23 +433,57 @@ div[data-testid="stDownloadButton"] button {
 div[data-testid="stHorizontalBlock"] div[data-testid="column"] .stButton>button {
     width:100%;
 }
-/* Nút phân trang: nhỏ gọn, vừa đủ nhìn (đè lên style nút to mặc định) */
+
+/* Khung bo tròn bao quanh cả dải nút phân trang */
 .pg-nav-marker + div[data-testid="stHorizontalBlock"] {
-    gap: 0.28rem !important;
-    margin-bottom: 0.6rem;
+    gap: 0.18rem !important;
+    background: #ffffff;
+    border: 1px solid #e6eaf1;
+    border-radius: 999px;
+    padding: 0.22rem 0.3rem;
+    box-shadow: 0 2px 10px rgba(15,23,42,0.06);
+    margin: 0 auto 0.6rem;
+    width: fit-content;
+    max-width: 100%;
 }
-.pg-nav-marker + div[data-testid="stHorizontalBlock"] .stButton>button {
-    padding: 0 !important;
+
+/* Nút phân trang: nhỏ gọn, dạng viên thuốc, trong suốt theo mặc định */
+.pg-nav-marker + div[data-testid="stHorizontalBlock"] .stButton>button,
+.pg-nav-marker + div[data-testid="stHorizontalBlock"] .stButton>button:hover,
+.pg-nav-marker + div[data-testid="stHorizontalBlock"] .stButton>button:focus {
+    padding: 0 0.15rem !important;
     min-height: 1.7rem !important;
     height: 1.7rem !important;
+    min-width: 1.7rem !important;
     line-height: 1.7rem !important;
-    font-size: 0.68rem !important;
+    font-size: 0.7rem !important;
     font-weight: 600 !important;
-    border-radius: 6px !important;
+    border-radius: 999px !important;
     box-shadow: none !important;
-}
-.pg-nav-marker + div[data-testid="stHorizontalBlock"] .stButton>button:hover {
+    border: none !important;
+    background: transparent !important;
+    color: #475569 !important;
     transform: none !important;
+}
+/* Hover cho các nút chưa active (không disabled) */
+.pg-nav-marker + div[data-testid="stHorizontalBlock"] .stButton>button:hover:not(:disabled) {
+    background: #f1f5f9 !important;
+    color: #0f172a !important;
+}
+/* Trang HIỆN TẠI (type="primary", disabled) — nền đậm, chữ trắng, nổi bật */
+.pg-nav-marker + div[data-testid="stHorizontalBlock"] .stButton>button[kind="primary"],
+.pg-nav-marker + div[data-testid="stHorizontalBlock"] [data-testid^="stBaseButton-primary"] button,
+.pg-nav-marker + div[data-testid="stHorizontalBlock"] button[data-testid*="-primary"] {
+    background: linear-gradient(135deg,#0f172a,#1e3a5f) !important;
+    color: #ffffff !important;
+    opacity: 1 !important;
+    cursor: default !important;
+}
+/* Nút ‹ › đầu/cuối khi bị disabled (đã ở trang đầu/cuối) — làm mờ đi */
+.pg-nav-marker + div[data-testid="stHorizontalBlock"] .stButton>button:disabled:not([kind="primary"]) {
+    opacity: 0.32 !important;
+    color: #94a3b8 !important;
+    background: transparent !important;
 }
 
 /* == FORCE LIGHT MODE — disable dark theme == */
@@ -1318,23 +1352,19 @@ def render_paginated_cards(items_df, state_key, render_fn=None, page_size=PAGE_S
         )
 
         nums = _paginate_page_numbers(cur, total_pages)
-        # Bố cục: [«] [‹] [ ...số trang... ] [›] [»]
+        # Bố cục gọn: [‹] [ ...số trang... ] [›]  (trang 1 và trang cuối luôn
+        # có mặt trong dải số nên không cần thêm nút "về đầu / về cuối" riêng)
         st.markdown('<div class="pg-nav-marker"></div>', unsafe_allow_html=True)
-        cols = st.columns([1, 1] + [1] * len(nums) + [1, 1])
+        cols = st.columns([1] + [1] * len(nums) + [1])
 
         with cols[0]:
-            if st.button("«", key=f"{state_key}_first", disabled=(cur == 1),
-                         use_container_width=True):
-                st.session_state[state_key] = 1
-                _smart_rerun()
-        with cols[1]:
             if st.button("‹", key=f"{state_key}_prev", disabled=(cur == 1),
                          use_container_width=True):
                 st.session_state[state_key] = cur - 1
                 _smart_rerun()
 
         for i, p in enumerate(nums):
-            with cols[2 + i]:
+            with cols[1 + i]:
                 if p is None:
                     st.markdown(
                         '<div style="text-align:center;color:#94a3b8;font-size:0.68rem;height:1.7rem;line-height:1.7rem">…</div>',
@@ -1350,15 +1380,10 @@ def render_paginated_cards(items_df, state_key, render_fn=None, page_size=PAGE_S
                         st.session_state[state_key] = p
                         _smart_rerun()
 
-        with cols[2 + len(nums)]:
+        with cols[1 + len(nums)]:
             if st.button("›", key=f"{state_key}_next", disabled=(cur == total_pages),
                          use_container_width=True):
                 st.session_state[state_key] = cur + 1
-                _smart_rerun()
-        with cols[3 + len(nums)]:
-            if st.button("»", key=f"{state_key}_last", disabled=(cur == total_pages),
-                         use_container_width=True):
-                st.session_state[state_key] = total_pages
                 _smart_rerun()
 
 
@@ -1486,17 +1511,13 @@ def render_upcoming_table(sub_df, empty_msg, dl_prefix, dl_key, page_state_key=N
         )
         nums = _paginate_page_numbers(cur, total_pages)
         st.markdown('<div class="pg-nav-marker"></div>', unsafe_allow_html=True)
-        cols = st.columns([1, 1] + [1] * len(nums) + [1, 1])
+        cols = st.columns([1] + [1] * len(nums) + [1])
         with cols[0]:
-            if st.button("«", key=f"{state_key}_first", disabled=(cur == 1), use_container_width=True):
-                st.session_state[state_key] = 1
-                _smart_rerun()
-        with cols[1]:
             if st.button("‹", key=f"{state_key}_prev", disabled=(cur == 1), use_container_width=True):
                 st.session_state[state_key] = cur - 1
                 _smart_rerun()
         for i, p in enumerate(nums):
-            with cols[2 + i]:
+            with cols[1 + i]:
                 if p is None:
                     st.markdown(
                         '<div style="text-align:center;color:#94a3b8;font-size:0.68rem;height:1.7rem;line-height:1.7rem">…</div>',
@@ -1511,13 +1532,9 @@ def render_upcoming_table(sub_df, empty_msg, dl_prefix, dl_key, page_state_key=N
                     ):
                         st.session_state[state_key] = p
                         _smart_rerun()
-        with cols[2 + len(nums)]:
+        with cols[1 + len(nums)]:
             if st.button("›", key=f"{state_key}_next", disabled=(cur == total_pages), use_container_width=True):
                 st.session_state[state_key] = cur + 1
-                _smart_rerun()
-        with cols[3 + len(nums)]:
-            if st.button("»", key=f"{state_key}_last", disabled=(cur == total_pages), use_container_width=True):
-                st.session_state[state_key] = total_pages
                 _smart_rerun()
 
     dl_cols = [c for c in [COL_NAME, COL_BIRTH_YEAR, COL_PHONE, COL_EXAM_DATE, COL_EXAM_TIME,
