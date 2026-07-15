@@ -2085,22 +2085,120 @@ if st.session_state.metrics:
                 st.plotly_chart(ft_src, use_container_width=True, config={"displayModeBar":False})
                 st.markdown('</div>', unsafe_allow_html=True)
 
-            # ── Danh sách tái khám ──
+            # ── Thống kê Tái Khám theo Ngày / Tháng / Năm ──
             if COL_SOURCE in df.columns and src_noi > 0:
-                st.markdown(f'<div class="sh"><div class="sh-dot" style="background:{CV}"></div><span class="sh-txt">Danh Sách Bệnh Nhân Từ Khoa / Tái Khám</span></div>', unsafe_allow_html=True)
-                noi_list = df[df[COL_SOURCE].astype(str).str.contains("khoa|tái|nội trú|xuất viện|tai", case=False, na=False)]
-                show_src_cols = [col for col in [COL_TIMESTAMP,COL_NAME,COL_EXAM_DATE,
-                                                  COL_STATUS,COL_SPECIALTY,COL_SOURCE]
-                                 if col in noi_list.columns]
-                noi_list = noi_list.reset_index(drop=True)
-                render_paginated_cards(noi_list[show_src_cols], "pg_tab4_taikham")
-                csv_src = noi_list[show_src_cols].to_csv(index=False, encoding="utf-8-sig")
-                st.download_button(
-                    label="⬇️ Tải danh sách tái khám (.csv)",
-                    data=csv_src.encode("utf-8-sig"),
-                    file_name=f"taikham_{datetime.now().strftime('%Y%m%d')}.csv",
-                    mime="text/csv",
+                st.markdown(
+                    f'<div class="sh"><div class="sh-dot" style="background:{CV}"></div>'
+                    f'<span class="sh-txt">Thống Kê Tái Khám Theo Thời Gian</span></div>',
+                    unsafe_allow_html=True
                 )
+
+                noi_all = df[df[COL_SOURCE].astype(str).str.contains(
+                    "khoa|tái|nội trú|xuất viện|tai", case=False, na=False
+                )].copy()
+                noi_dated = noi_all[noi_all["_date"].notna()].copy() if "_date" in noi_all.columns else noi_all.iloc[0:0].copy()
+
+                tk_period = st.radio(
+                    "Xem theo:", ["Ngày", "Tháng", "Năm"],
+                    horizontal=True, index=0, label_visibility="collapsed",
+                    key="tk_period_filter"
+                )
+
+                # Danh sách các năm có dữ liệu (luôn có năm hiện tại để chọn được)
+                years_avail = sorted(set(
+                    noi_dated["_date"].dt.year.dropna().astype(int).tolist() + [today.year]
+                ))
+
+                if tk_period == "Ngày":
+                    tk_date = st.date_input(
+                        "Chọn ngày", value=today, format="DD/MM/YYYY", key="tk_date_pick"
+                    )
+                    tk_filtered = noi_dated[noi_dated["_date"].dt.date == tk_date]
+                    tk_label = f"Ngày {tk_date.strftime('%d/%m/%Y')}"
+                elif tk_period == "Tháng":
+                    tcol1, tcol2 = st.columns(2)
+                    with tcol1:
+                        tk_month = st.selectbox(
+                            "Tháng", list(range(1, 13)), index=today.month - 1,
+                            format_func=lambda m: f"Tháng {m:02d}", key="tk_month_pick"
+                        )
+                    with tcol2:
+                        tk_year = st.selectbox(
+                            "Năm", years_avail,
+                            index=years_avail.index(today.year), key="tk_year_pick_m"
+                        )
+                    tk_filtered = noi_dated[
+                        (noi_dated["_date"].dt.month == tk_month) &
+                        (noi_dated["_date"].dt.year == tk_year)
+                    ]
+                    tk_label = f"Tháng {tk_month:02d}/{tk_year}"
+                else:  # Năm
+                    tk_year = st.selectbox(
+                        "Năm", years_avail,
+                        index=years_avail.index(today.year), key="tk_year_pick_y"
+                    )
+                    tk_filtered = noi_dated[noi_dated["_date"].dt.year == tk_year]
+                    tk_label = f"Năm {tk_year}"
+
+                tk_total = len(tk_filtered)
+                tk_att = int(
+                    (tk_filtered[COL_STATUS].astype(str).str.upper() == STATUS_ATTENDED.upper()).sum()
+                ) if COL_STATUS in tk_filtered.columns else 0
+                tk_nos = tk_total - tk_att
+                tk_att_pct = round(tk_att / tk_total * 100, 1) if tk_total > 0 else 0
+                tk_nos_pct = round(100 - tk_att_pct, 1) if tk_total > 0 else 0
+
+                st.markdown(f"""
+                <div class="kg" style="grid-template-columns:repeat(3,1fr);gap:0.55rem;margin:0.7rem 0 0.9rem">
+                  <div class="kc kc-v"><div class="kc-bg">🏥</div>
+                    <div class="kc-lbl">Tổng Tái Khám — {tk_label}</div>
+                    <div class="kc-val">{tk_total}</div>
+                    <div class="kc-sub">bệnh nhân từ khoa / tái khám</div>
+                  </div>
+                  <div class="kc kc-g"><div class="kc-bg">✅</div>
+                    <div class="kc-lbl">Đã Đến Khám</div>
+                    <div class="kc-val">{tk_att}</div>
+                    <div class="kc-sub">{tk_att_pct}% trong kỳ</div>
+                  </div>
+                  <div class="kc kc-r"><div class="kc-bg">❌</div>
+                    <div class="kc-lbl">Vắng / Chưa Khám</div>
+                    <div class="kc-val">{tk_nos}</div>
+                    <div class="kc-sub">{tk_nos_pct}% trong kỳ</div>
+                  </div>
+                </div>
+                """, unsafe_allow_html=True)
+
+                if tk_total > 0:
+                    st.markdown(
+                        f'<div class="sh"><div class="sh-dot" style="background:{CV}"></div>'
+                        f'<span class="sh-txt">Danh Sách Bệnh Nhân Tái Khám — {tk_label} '
+                        f'({tk_total} người)</span></div>',
+                        unsafe_allow_html=True
+                    )
+                    show_src_cols = [col for col in [COL_TIMESTAMP, COL_NAME, COL_EXAM_DATE,
+                                                      COL_STATUS, COL_SPECIALTY, COL_SOURCE]
+                                     if col in tk_filtered.columns]
+                    tk_filtered_show = tk_filtered[show_src_cols].reset_index(drop=True)
+                    # Khoá phân trang riêng theo kỳ đang xem, để đổi ngày/tháng/năm tự về trang 1
+                    tk_pg_key = "pg_tab4_taikham_" + re.sub(r"\W+", "_", tk_period + "_" + tk_label)
+                    render_paginated_cards(tk_filtered_show, tk_pg_key)
+
+                    csv_src = tk_filtered[show_src_cols].to_csv(index=False, encoding="utf-8-sig")
+                    st.download_button(
+                        label=f"⬇️ Tải danh sách tái khám {tk_label} (.csv)",
+                        data=csv_src.encode("utf-8-sig"),
+                        file_name=f"taikham_{re.sub(r'[^0-9A-Za-z]+', '_', tk_label)}.csv",
+                        mime="text/csv",
+                        key="dl_taikham_period_csv",
+                    )
+                else:
+                    st.markdown(f"""
+                    <div class="empty">
+                      <div class="empty-ico">📭</div>
+                      <div class="empty-ttl">Không có bệnh nhân tái khám trong {tk_label}</div>
+                      <div class="empty-dsc">Thử chọn ngày / tháng / năm khác.</div>
+                    </div>
+                    """, unsafe_allow_html=True)
 
             # ── Thống kê theo KHOA KHÁM CHỮA BỆNH ──
             if COL_KHOA in df.columns:
