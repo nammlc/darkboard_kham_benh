@@ -341,6 +341,54 @@ div[data-testid="stDownloadButton"] button {
 }
 .upcoming-day-body { padding:0.5rem 0.75rem 0.75rem; }
 
+/* Breakdown chips (Khoa Khám Bệnh vs Khoa khác) trong thẻ ngày */
+.upcoming-day-stats {
+    display:grid; grid-template-columns:1fr 1fr;
+    gap:0.55rem; padding:0.8rem 1rem 0.2rem;
+}
+.uds-item {
+    border-radius:11px; padding:0.6rem 0.75rem;
+    display:flex; flex-direction:column; gap:0.15rem;
+}
+.uds-kb   { background:#eff6ff; border:1px solid #bfdbfe; }
+.uds-khac { background:#f5f3ff; border:1px solid #ddd6fe; }
+.uds-val  { font-family:'JetBrains Mono',monospace !important; font-weight:700; font-size:1.35rem; line-height:1; }
+.uds-kb   .uds-val { color:#1d4ed8 !important; }
+.uds-khac .uds-val { color:#6d28d9 !important; }
+.uds-lbl  { font-size:0.62rem; font-weight:600; color:#475569; line-height:1.35; margin-top:0.15rem; }
+.upcoming-day-actions { padding:0.35rem 1rem 0.9rem; }
+
+/* Nút "Xem chi tiết" trong thẻ ngày — nổi bật, dạng pill gradient */
+.upcoming-day-actions .stButton>button {
+    background:linear-gradient(135deg,#0f4c75,#1b6ca8) !important;
+    color:white !important; border:none !important;
+    border-radius:10px !important; font-weight:700 !important;
+    font-size:0.8rem !important; padding:0.5rem 1rem !important;
+    box-shadow:0 2px 10px rgba(15,76,117,0.25) !important;
+}
+.upcoming-day-actions .stButton>button:hover {
+    filter:brightness(1.08);
+    box-shadow:0 4px 14px rgba(15,76,117,0.35) !important;
+}
+
+/* Badge Khoa trong bảng chi tiết */
+.khoa-badge {
+    font-size:0.62rem; font-weight:600; padding:0.2rem 0.55rem;
+    border-radius:20px; white-space:normal; display:inline-block;
+}
+.khoa-kb   { background:#eff6ff; color:#1d4ed8; }
+.khoa-khac { background:#ede9fe; color:#5b21b6; }
+.khoa-none { background:#f1f5f9; color:#64748b; }
+
+/* Header nhóm trong dialog */
+.dlg-group-hd {
+    display:flex; align-items:center; justify-content:space-between;
+    background:#f8fafc; border:1px solid #e2e8f0; border-radius:10px;
+    padding:0.55rem 0.85rem; margin-bottom:0.6rem;
+}
+.dlg-group-hd b { font-size:0.82rem; color:#1e293b; }
+.dlg-group-hd span { font-size:0.72rem; color:#64748b; }
+
 /* ── SOURCE STATS CARDS ── */
 .src-grid {
     display:grid; grid-template-columns:repeat(2,1fr);
@@ -1148,6 +1196,113 @@ def patient_card_html(row):
     )
 
 
+def classify_khoa_group(khoa_val):
+    """
+    Phân loại bệnh nhân theo cột KHOA KHÁM CHỮA BỆNH thành 2 nhóm:
+      - "kb"   : Khoa Khám Bệnh + bệnh nhân chưa được gán khoa nào
+      - "khac" : Các khoa điều trị nội trú khác (khác Khoa Khám Bệnh)
+    """
+    s = str(khoa_val).strip()
+    if not s or s.lower() in ("nan", "n/a", "na", "none", "-", "—", "chưa xác định"):
+        return "kb"
+    if "khám bệnh" in s.lower():
+        return "kb"
+    return "khac"
+
+def khoa_badge_html(khoa_val):
+    s = str(khoa_val).strip()
+    if not s or s.lower() in ("nan", "n/a", "na", "none", "-", "—"):
+        return '<span class="khoa-badge khoa-none">Chưa phân khoa</span>'
+    cls = "khoa-kb" if "khám bệnh" in s.lower() else "khoa-khac"
+    label = s if len(s) <= 32 else s[:32] + "…"
+    return f'<span class="khoa-badge {cls}">{label}</span>'
+
+def upcoming_row_html(row2):
+    """Dựng 1 dòng <tr> cho bảng chi tiết bệnh nhân (tab 3 ngày tới)."""
+    name  = str(row2.get(COL_NAME,"") or "—")
+    byr   = str(row2.get(COL_BIRTH_YEAR,"") or "—")
+    phone = str(row2.get(COL_PHONE,"") or "—")
+    etime = str(row2.get(COL_EXAM_TIME,"") or "—")
+    spec  = str(row2.get(COL_SPECIALTY,"") or "—")
+    src_raw = str(row2.get(COL_SOURCE,"") or "")
+    src_badge = source_badge(src_raw)
+    src_show  = src_badge if src_badge else "—"
+    stat  = str(row2.get(COL_STATUS,"") or "—")
+    khoa_show = khoa_badge_html(row2.get(COL_KHOA,""))
+
+    if len(etime) >= 5 and ":" in etime:
+        etime = etime[:5]
+    if len(spec) > 26:
+        spec = spec[:26] + "…"
+
+    if STATUS_ATTENDED.upper() in stat.upper():
+        stat_style = "color:#059669;font-weight:700"
+    else:
+        stat_style = "color:#475569"
+
+    if phone not in ("—","N/A","nan",""):
+        tel_digits = "".join(ch for ch in phone if ch.isdigit() or ch == "+")
+        phone_show = (
+            '<a href="tel:' + tel_digits + '" '
+            'style="color:#1d4ed8;font-weight:700;text-decoration:none">'
+            + phone + '</a>'
+        )
+    else:
+        phone_show = phone
+
+    return (
+        '<tr>'
+        '<td style="font-weight:600;color:#0f172a">' + name + '</td>'
+        '<td style="font-family:JetBrains Mono,monospace;color:#1d4ed8">' + etime + '</td>'
+        '<td>' + byr + '</td>'
+        '<td>' + phone_show + '</td>'
+        '<td style="max-width:130px;white-space:normal">' + spec + '</td>'
+        '<td style="max-width:150px;white-space:normal">' + khoa_show + '</td>'
+        '<td>' + src_show + '</td>'
+        '<td style="' + stat_style + '">' + stat + '</td>'
+        '</tr>'
+    )
+
+def render_upcoming_table(sub_df, empty_msg, dl_prefix, dl_key):
+    """Vẽ bảng chi tiết bệnh nhân + nút tải CSV cho 1 nhóm (kb / khác) trong 1 ngày."""
+    if len(sub_df) == 0:
+        st.markdown(
+            '<div style="text-align:center;padding:1.4rem 0.5rem;color:#94a3b8;font-size:0.82rem">'
+            + empty_msg + '</div>',
+            unsafe_allow_html=True
+        )
+        return
+    rows_html = "".join(upcoming_row_html(row2) for _, row2 in sub_df.iterrows())
+    st.markdown(
+        '<div class="rtbl-wrap">'
+        '<table class="rtbl"><thead><tr>'
+        '<th>Họ Tên</th><th>Giờ Khám</th><th>Năm Sinh</th><th>Số ĐT</th>'
+        '<th>Chuyên Khoa</th><th>Khoa Khám Chữa Bệnh</th><th>Nguồn BN</th><th>Trạng Thái</th>'
+        '</tr></thead><tbody>' + rows_html + '</tbody></table></div>'
+        '<div class="scroll-hint">&#8592; Vuốt ngang để xem thêm &#8594;</div>',
+        unsafe_allow_html=True
+    )
+    dl_cols = [c for c in [COL_NAME, COL_BIRTH_YEAR, COL_PHONE, COL_EXAM_DATE, COL_EXAM_TIME,
+                           COL_SPECIALTY, COL_KHOA, COL_DOCTOR, COL_SOURCE, COL_STATUS]
+               if c in sub_df.columns]
+    csv_data = sub_df[dl_cols].to_csv(index=False, encoding="utf-8-sig")
+    st.download_button(
+        label="⬇️ Tải danh sách (.csv)",
+        data=csv_data.encode("utf-8-sig"),
+        file_name=f"{dl_prefix}.csv",
+        mime="text/csv",
+        key=dl_key,
+    )
+
+def split_khoa_groups(day_df):
+    """Trả về (kb_df, khac_df) đã phân loại theo cột KHOA KHÁM CHỮA BỆNH."""
+    if COL_KHOA in day_df.columns:
+        grp = day_df[COL_KHOA].apply(classify_khoa_group)
+    else:
+        grp = pd.Series(["kb"] * len(day_df), index=day_df.index)
+    return day_df[grp == "kb"], day_df[grp == "khac"]
+
+
 # ═══════════════════════════════════════════════
 # SESSION + FETCH
 # ═══════════════════════════════════════════════
@@ -1423,11 +1578,55 @@ if st.session_state.metrics:
 
         # Build list of next 3 days (exclude today)
         upcoming_dates = [today + timedelta(days=i) for i in range(1, 4)]
-        total_upcoming = 0
 
         # Dùng dữ liệu ĐẦY ĐỦ (không lọc theo cột TRẠNG THÁI) để không bỏ
         # sót bệnh nhân chưa được gán trạng thái — phục vụ mục đích nhắc lịch khám.
         df_upcoming = m.get("df_full", df)
+
+        HAS_DIALOG = hasattr(st, "dialog")
+
+        def _get_day_df(udate):
+            dday = df_upcoming[df_upcoming["_date"].dt.date == udate].copy()
+            if COL_EXAM_TIME in dday.columns:
+                dday = dday.sort_values(COL_EXAM_TIME)
+            return dday
+
+        def _render_day_detail(dday, udate_iso):
+            kb_df, khac_df = split_khoa_groups(dday)
+            gtab1, gtab2 = st.tabs([
+                f"🩺 Khoa Khám Bệnh & Chưa Phân Khoa · {len(kb_df)}",
+                f"🏥 Khoa Điều Trị Nội Trú Khác · {len(khac_df)}",
+            ])
+            with gtab1:
+                st.markdown(
+                    '<div class="dlg-group-hd"><b>🩺 Khoa Khám Bệnh &amp; bệnh nhân chưa phân khoa</b>'
+                    f'<span>{len(kb_df)} bệnh nhân</span></div>',
+                    unsafe_allow_html=True
+                )
+                render_upcoming_table(
+                    kb_df,
+                    "Không có bệnh nhân thuộc nhóm Khoa Khám Bệnh / chưa phân khoa trong ngày này.",
+                    f"kb_{udate_iso}", f"dl_kb_{udate_iso}"
+                )
+            with gtab2:
+                st.markdown(
+                    '<div class="dlg-group-hd"><b>🏥 Các khoa điều trị nội trú khác</b>'
+                    f'<span>{len(khac_df)} bệnh nhân</span></div>',
+                    unsafe_allow_html=True
+                )
+                render_upcoming_table(
+                    khac_df,
+                    "Không có bệnh nhân thuộc các khoa điều trị nội trú khác trong ngày này.",
+                    f"khac_{udate_iso}", f"dl_khac_{udate_iso}"
+                )
+
+        if HAS_DIALOG:
+            @st.dialog("📋 Chi Tiết Lịch Khám Theo Ngày", width="large")
+            def _open_day_dialog(date_iso, day_title_):
+                st.markdown(f"#### 📅 {day_title_}")
+                dday = _get_day_df(datetime.strptime(date_iso, "%Y-%m-%d").date())
+                st.caption(f"Tổng cộng {len(dday)} bệnh nhân đăng ký khám ngày này.")
+                _render_day_detail(dday, date_iso)
 
         if "_date" in df_upcoming.columns and df_upcoming["_date"].notna().any():
             # Tổng số bệnh nhân trong cả 3 ngày tới — hiển thị rõ để dễ kiểm chứng
@@ -1444,21 +1643,21 @@ if st.session_state.metrics:
                 unsafe_allow_html=True
             )
 
-            for udate in upcoming_dates:
-                day_df = df_upcoming[df_upcoming["_date"].dt.date == udate].copy()
-                count  = len(day_df)
-                total_upcoming += count
+            day_labels = {0:"Thứ Hai",1:"Thứ Ba",2:"Thứ Tư",
+                           3:"Thứ Năm",4:"Thứ Sáu",5:"Thứ Bảy",6:"Chủ Nhật"}
+            day_colors = ["#3b82f6","#10b981","#8b5cf6"]
 
-                # Day header
-                day_labels = {0:"Thứ Hai",1:"Thứ Ba",2:"Thứ Tư",
-                               3:"Thứ Năm",4:"Thứ Sáu",5:"Thứ Bảy",6:"Chủ Nhật"}
+            for dci, udate in enumerate(upcoming_dates):
+                day_df = _get_day_df(udate)
+                count  = len(day_df)
+                udate_iso = udate.isoformat()
+
                 weekday_vn = day_labels.get(udate.weekday(), "")
                 day_title  = weekday_vn + " — " + udate.strftime("%d/%m/%Y")
+                dc = day_colors[dci]
 
-                # Accent color per day
-                day_colors = ["#3b82f6","#10b981","#8b5cf6"]
-                dci = upcoming_dates.index(udate)
-                dc  = day_colors[dci]
+                kb_df, khac_df = split_khoa_groups(day_df)
+                kb_count, khac_count = len(kb_df), len(khac_df)
 
                 st.markdown(
                     '<div class="upcoming-day">'
@@ -1470,95 +1669,31 @@ if st.session_state.metrics:
                 )
 
                 if count > 0:
-                    # Sort by exam time if available
-                    if COL_EXAM_TIME in day_df.columns:
-                        day_df = day_df.sort_values(COL_EXAM_TIME)
-
-                    # Build table rows
-                    rows_html = ""
-                    for idx2, row2 in day_df.iterrows():
-                        name  = str(row2.get(COL_NAME,"") or "—")
-                        byr   = str(row2.get(COL_BIRTH_YEAR,"") or "—")
-                        phone = str(row2.get(COL_PHONE,"") or "—")
-                        etime = str(row2.get(COL_EXAM_TIME,"") or "—")
-                        spec  = str(row2.get(COL_SPECIALTY,"") or "—")
-                        src_raw = str(row2.get(COL_SOURCE,"") or "")
-                        # Nhãn màu để phân biệt nguồn bệnh nhân (vd: Từ khoa/Tái khám vs Vãng lai)
-                        src_badge = source_badge(src_raw)
-                        src_show  = src_badge if src_badge else "—"
-                        stat  = str(row2.get(COL_STATUS,"") or "—")
-
-                        # Shorten time hh:mm:ss -> hh:mm
-                        if len(etime) >= 5 and ":" in etime:
-                            etime = etime[:5]
-
-                        # Shorten spec
-                        if len(spec) > 30:
-                            spec = spec[:30] + "…"
-
-                        # Status color
-                        if STATUS_ATTENDED.upper() in stat.upper():
-                            stat_style = "color:#059669;font-weight:700"
-                        else:
-                            stat_style = "color:#475569"
-
-                        # Hiển thị ĐẦY ĐỦ số điện thoại (không che) để nhân viên
-                        # gọi trực tiếp cho bệnh nhân; thêm liên kết tel: để bấm gọi nhanh trên điện thoại.
-                        if phone not in ("—","N/A","nan",""):
-                            tel_digits = "".join(ch for ch in phone if ch.isdigit() or ch == "+")
-                            phone_show = (
-                                '<a href="tel:' + tel_digits + '" '
-                                'style="color:#1d4ed8;font-weight:700;text-decoration:none">'
-                                + phone + '</a>'
-                            )
-                        else:
-                            phone_show = phone
-
-                        rows_html += (
-                            '<tr>'
-                            '<td style="font-weight:600;color:#0f172a">' + name + '</td>'
-                            '<td style="font-family:JetBrains Mono,monospace;color:#1d4ed8">' + etime + '</td>'
-                            '<td>' + byr + '</td>'
-                            '<td>' + phone_show + '</td>'
-                            '<td style="max-width:140px;white-space:normal">' + spec + '</td>'
-                            '<td>' + src_show + '</td>'
-                            '<td style="' + stat_style + '">' + stat + '</td>'
-                            '</tr>'
-                        )
-
                     st.markdown(
-                        '<div class="upcoming-day-body">'
-                        '<div class="rtbl-wrap">'
-                        '<table class="rtbl"><thead><tr>'
-                        '<th>Họ Tên</th>'
-                        '<th>Giờ Khám</th>'
-                        '<th>Năm Sinh</th>'
-                        '<th>Số ĐT</th>'
-                        '<th>Chuyên Khoa</th>'
-                        '<th>Nguồn BN</th>'
-                        '<th>Trạng Thái</th>'
-                        '</tr></thead>'
-                        '<tbody>' + rows_html + '</tbody>'
-                        '</table></div>'
-                        '<div class="scroll-hint">&#8592; Vuốt ngang để xem thêm &#8594;</div>'
+                        '<div class="upcoming-day-stats">'
+                        '<div class="uds-item uds-kb">'
+                        '<span class="uds-val">' + str(kb_count) + '</span>'
+                        '<span class="uds-lbl">🩺 Khoa Khám Bệnh &amp; chưa phân khoa</span>'
+                        '</div>'
+                        '<div class="uds-item uds-khac">'
+                        '<span class="uds-val">' + str(khac_count) + '</span>'
+                        '<span class="uds-lbl">🏥 Khoa điều trị nội trú khác</span>'
+                        '</div>'
                         '</div>',
                         unsafe_allow_html=True
                     )
 
-                    # Download CSV per day
-                    dl_cols = [col for col in [COL_NAME, COL_BIRTH_YEAR, COL_PHONE,
-                                               COL_EXAM_DATE, COL_EXAM_TIME,
-                                               COL_SPECIALTY, COL_DOCTOR,
-                                               COL_SOURCE, COL_STATUS]
-                               if col in day_df.columns]
-                    csv_up = day_df[dl_cols].to_csv(index=False, encoding="utf-8-sig")
-                    st.download_button(
-                        label="&#11015;&#65039; Tải danh sách " + udate.strftime("%d/%m/%Y") + " (.csv)",
-                        data=csv_up.encode("utf-8-sig"),
-                        file_name="lichkham_" + udate.strftime("%d%m%Y") + ".csv",
-                        mime="text/csv",
-                        key="dl_upcoming_" + udate.strftime("%Y%m%d"),
-                    )
+                    if HAS_DIALOG:
+                        st.markdown('<div class="upcoming-day-actions">', unsafe_allow_html=True)
+                        if st.button("👁️ Xem chi tiết danh sách", key="btn_open_" + udate.strftime("%Y%m%d"),
+                                     use_container_width=True):
+                            _open_day_dialog(udate.isoformat(), day_title)
+                        st.markdown('</div>', unsafe_allow_html=True)
+                    else:
+                        st.markdown('<div class="upcoming-day-actions">', unsafe_allow_html=True)
+                        with st.expander("👁️ Xem chi tiết danh sách bệnh nhân", expanded=False):
+                            _render_day_detail(day_df, udate_iso)
+                        st.markdown('</div>', unsafe_allow_html=True)
                 else:
                     st.markdown(
                         '<div class="upcoming-day-body">'
@@ -1570,7 +1705,7 @@ if st.session_state.metrics:
 
                 st.markdown('</div>', unsafe_allow_html=True)  # close upcoming-day
 
-            if total_upcoming == 0:
+            if total_upcoming_all == 0:
                 st.markdown(
                     '<div class="empty">'
                     '<div class="empty-ico">&#128197;</div>'
