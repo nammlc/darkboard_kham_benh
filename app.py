@@ -434,9 +434,10 @@ div[data-testid="stHorizontalBlock"] div[data-testid="column"] .stButton>button 
     width:100%;
 }
 
-/* Khung bo tròn bao quanh cả dải nút phân trang */
-.pg-nav-marker + div[data-testid="stHorizontalBlock"] {
-    gap: 0.18rem !important;
+/* Khung bo tròn bao quanh cả dải nút phân trang.
+   Dùng [class*="_pgrow"] thay vì phụ thuộc vào type="primary" của Streamlit,
+   vì cách đó không phải lúc nào cũng bắt được bằng CSS ở mọi phiên bản. */
+div[class*="_pgrow"] {
     background: #ffffff;
     border: 1px solid #e6eaf1;
     border-radius: 999px;
@@ -446,11 +447,13 @@ div[data-testid="stHorizontalBlock"] div[data-testid="column"] .stButton>button 
     width: fit-content;
     max-width: 100%;
 }
+div[class*="_pgrow"] div[data-testid="stHorizontalBlock"] {
+    gap: 0.18rem !important;
+}
 
-/* Nút phân trang: nhỏ gọn, dạng viên thuốc, trong suốt theo mặc định */
-.pg-nav-marker + div[data-testid="stHorizontalBlock"] .stButton>button,
-.pg-nav-marker + div[data-testid="stHorizontalBlock"] .stButton>button:hover,
-.pg-nav-marker + div[data-testid="stHorizontalBlock"] .stButton>button:focus {
+/* Nút phân trang mặc định: nhỏ gọn, dạng viên thuốc, trong suốt */
+div[class*="_pgrow"] .stButton>button,
+div[class*="_pgrow"] .stButton>button:focus {
     padding: 0 0.15rem !important;
     min-height: 1.7rem !important;
     height: 1.7rem !important;
@@ -465,25 +468,25 @@ div[data-testid="stHorizontalBlock"] div[data-testid="column"] .stButton>button 
     color: #475569 !important;
     transform: none !important;
 }
-/* Hover cho các nút chưa active (không disabled) */
-.pg-nav-marker + div[data-testid="stHorizontalBlock"] .stButton>button:hover:not(:disabled) {
+div[class*="_pgrow"] .stButton>button:hover:not(:disabled) {
     background: #f1f5f9 !important;
     color: #0f172a !important;
 }
-/* Trang HIỆN TẠI (type="primary", disabled) — nền đậm, chữ trắng, nổi bật */
-.pg-nav-marker + div[data-testid="stHorizontalBlock"] .stButton>button[kind="primary"],
-.pg-nav-marker + div[data-testid="stHorizontalBlock"] [data-testid^="stBaseButton-primary"] button,
-.pg-nav-marker + div[data-testid="stHorizontalBlock"] button[data-testid*="-primary"] {
+/* Nút ‹ › khi bị disabled (đã ở trang đầu/cuối) — làm mờ đi để biết không bấm được */
+div[class*="_navbtn"] .stButton>button:disabled {
+    opacity: 0.32 !important;
+    color: #94a3b8 !important;
+    background: transparent !important;
+}
+/* Trang HIỆN TẠI — nền đậm, chữ trắng, luôn nổi bật kể cả khi disabled.
+   Đặt sau cùng + bám riêng vào container "_curbtn" nên không đụng độ nút khác. */
+div[class*="_curbtn"] .stButton>button,
+div[class*="_curbtn"] .stButton>button:disabled,
+div[class*="_curbtn"] .stButton>button:hover {
     background: linear-gradient(135deg,#0f172a,#1e3a5f) !important;
     color: #ffffff !important;
     opacity: 1 !important;
     cursor: default !important;
-}
-/* Nút ‹ › đầu/cuối khi bị disabled (đã ở trang đầu/cuối) — làm mờ đi */
-.pg-nav-marker + div[data-testid="stHorizontalBlock"] .stButton>button:disabled:not([kind="primary"]) {
-    opacity: 0.32 !important;
-    color: #94a3b8 !important;
-    background: transparent !important;
 }
 
 /* == FORCE LIGHT MODE — disable dark theme == */
@@ -1354,37 +1357,43 @@ def render_paginated_cards(items_df, state_key, render_fn=None, page_size=PAGE_S
         nums = _paginate_page_numbers(cur, total_pages)
         # Bố cục gọn: [‹] [ ...số trang... ] [›]  (trang 1 và trang cuối luôn
         # có mặt trong dải số nên không cần thêm nút "về đầu / về cuối" riêng)
-        st.markdown('<div class="pg-nav-marker"></div>', unsafe_allow_html=True)
-        cols = st.columns([1] + [1] * len(nums) + [1])
+        with st.container(key=f"{state_key}_pgrow"):
+            cols = st.columns([1] + [1] * len(nums) + [1])
 
-        with cols[0]:
-            if st.button("‹", key=f"{state_key}_prev", disabled=(cur == 1),
-                         use_container_width=True):
-                st.session_state[state_key] = cur - 1
-                _smart_rerun()
-
-        for i, p in enumerate(nums):
-            with cols[1 + i]:
-                if p is None:
-                    st.markdown(
-                        '<div style="text-align:center;color:#94a3b8;font-size:0.68rem;height:1.7rem;line-height:1.7rem">…</div>',
-                        unsafe_allow_html=True
-                    )
-                else:
-                    is_cur = (p == cur)
-                    if st.button(
-                        str(p), key=f"{state_key}_p{p}",
-                        disabled=is_cur, use_container_width=True,
-                        type=("primary" if is_cur else "secondary"),
-                    ):
-                        st.session_state[state_key] = p
+            with cols[0]:
+                with st.container(key=f"{state_key}_navbtn_prev"):
+                    if st.button("‹", key=f"{state_key}_prev", disabled=(cur == 1),
+                                 use_container_width=True):
+                        st.session_state[state_key] = cur - 1
                         _smart_rerun()
 
-        with cols[1 + len(nums)]:
-            if st.button("›", key=f"{state_key}_next", disabled=(cur == total_pages),
-                         use_container_width=True):
-                st.session_state[state_key] = cur + 1
-                _smart_rerun()
+            for i, p in enumerate(nums):
+                with cols[1 + i]:
+                    if p is None:
+                        st.markdown(
+                            '<div style="text-align:center;color:#94a3b8;font-size:0.68rem;height:1.7rem;line-height:1.7rem">…</div>',
+                            unsafe_allow_html=True
+                        )
+                    else:
+                        is_cur = (p == cur)
+                        if is_cur:
+                            # Trang hiện tại: bọc trong container riêng để CSS
+                            # tô đậm chắc chắn, không phụ thuộc type="primary".
+                            with st.container(key=f"{state_key}_curbtn_{p}"):
+                                st.button(str(p), key=f"{state_key}_p{p}",
+                                          disabled=True, use_container_width=True)
+                        else:
+                            if st.button(str(p), key=f"{state_key}_p{p}",
+                                         use_container_width=True):
+                                st.session_state[state_key] = p
+                                _smart_rerun()
+
+            with cols[1 + len(nums)]:
+                with st.container(key=f"{state_key}_navbtn_next"):
+                    if st.button("›", key=f"{state_key}_next", disabled=(cur == total_pages),
+                                 use_container_width=True):
+                        st.session_state[state_key] = cur + 1
+                        _smart_rerun()
 
 
 def classify_khoa_group(khoa_val):
@@ -1510,32 +1519,35 @@ def render_upcoming_table(sub_df, empty_msg, dl_prefix, dl_key, page_state_key=N
             unsafe_allow_html=True
         )
         nums = _paginate_page_numbers(cur, total_pages)
-        st.markdown('<div class="pg-nav-marker"></div>', unsafe_allow_html=True)
-        cols = st.columns([1] + [1] * len(nums) + [1])
-        with cols[0]:
-            if st.button("‹", key=f"{state_key}_prev", disabled=(cur == 1), use_container_width=True):
-                st.session_state[state_key] = cur - 1
-                _smart_rerun()
-        for i, p in enumerate(nums):
-            with cols[1 + i]:
-                if p is None:
-                    st.markdown(
-                        '<div style="text-align:center;color:#94a3b8;font-size:0.68rem;height:1.7rem;line-height:1.7rem">…</div>',
-                        unsafe_allow_html=True
-                    )
-                else:
-                    is_cur = (p == cur)
-                    if st.button(
-                        str(p), key=f"{state_key}_p{p}",
-                        disabled=is_cur, use_container_width=True,
-                        type=("primary" if is_cur else "secondary"),
-                    ):
-                        st.session_state[state_key] = p
+        with st.container(key=f"{state_key}_pgrow"):
+            cols = st.columns([1] + [1] * len(nums) + [1])
+            with cols[0]:
+                with st.container(key=f"{state_key}_navbtn_prev"):
+                    if st.button("‹", key=f"{state_key}_prev", disabled=(cur == 1), use_container_width=True):
+                        st.session_state[state_key] = cur - 1
                         _smart_rerun()
-        with cols[1 + len(nums)]:
-            if st.button("›", key=f"{state_key}_next", disabled=(cur == total_pages), use_container_width=True):
-                st.session_state[state_key] = cur + 1
-                _smart_rerun()
+            for i, p in enumerate(nums):
+                with cols[1 + i]:
+                    if p is None:
+                        st.markdown(
+                            '<div style="text-align:center;color:#94a3b8;font-size:0.68rem;height:1.7rem;line-height:1.7rem">…</div>',
+                            unsafe_allow_html=True
+                        )
+                    else:
+                        is_cur = (p == cur)
+                        if is_cur:
+                            with st.container(key=f"{state_key}_curbtn_{p}"):
+                                st.button(str(p), key=f"{state_key}_p{p}",
+                                          disabled=True, use_container_width=True)
+                        else:
+                            if st.button(str(p), key=f"{state_key}_p{p}", use_container_width=True):
+                                st.session_state[state_key] = p
+                                _smart_rerun()
+            with cols[1 + len(nums)]:
+                with st.container(key=f"{state_key}_navbtn_next"):
+                    if st.button("›", key=f"{state_key}_next", disabled=(cur == total_pages), use_container_width=True):
+                        st.session_state[state_key] = cur + 1
+                        _smart_rerun()
 
     dl_cols = [c for c in [COL_NAME, COL_BIRTH_YEAR, COL_PHONE, COL_EXAM_DATE, COL_EXAM_TIME,
                            COL_SPECIALTY, COL_KHOA, COL_DOCTOR, COL_SOURCE, COL_STATUS]
