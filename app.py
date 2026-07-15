@@ -424,6 +424,16 @@ div[data-testid="stDownloadButton"] button {
     padding:0.25rem 0; font-style:italic;
 }
 
+/* ── PAGINATION ── */
+.pg-info {
+    text-align:center; font-size:0.72rem; color:#64748b;
+    margin:0.5rem 0 0.35rem; font-weight:500;
+}
+.pg-info b { color:#0f172a; font-family:'JetBrains Mono',monospace; }
+div[data-testid="stHorizontalBlock"] div[data-testid="column"] .stButton>button {
+    width:100%;
+}
+
 /* == FORCE LIGHT MODE — disable dark theme == */
 .stApp { background:#f0f4f8 !important; color:#1e293b !important; }
 [data-testid="stAppViewContainer"] { background:#f0f4f8 !important; }
@@ -1196,6 +1206,127 @@ def patient_card_html(row):
     )
 
 
+PAGE_SIZE = 10  # số bệnh nhân hiển thị mỗi trang, dùng chung cho mọi danh sách
+
+def _paginate_page_numbers(current, total):
+    """
+    Sinh danh sách số trang thông minh kiểu '1 … 4 5 [6] 7 8 … 42'.
+    Luôn hiện trang đầu, trang cuối, trang hiện tại ± 1, và dùng None
+    để đánh dấu chỗ cần chèn dấu '…'.
+    """
+    if total <= 7:
+        return list(range(1, total + 1))
+    pages = {1, total, current}
+    for d in (-1, 0, 1):
+        p = current + d
+        if 1 <= p <= total:
+            pages.add(p)
+    pages = sorted(pages)
+    out = []
+    prev = None
+    for p in pages:
+        if prev is not None and p - prev > 1:
+            out.append(None)
+        out.append(p)
+        prev = p
+    return out
+
+def render_paginated_cards(items_df, state_key, render_fn=None, page_size=PAGE_SIZE):
+    """
+    Hiển thị danh sách bệnh nhân dưới dạng thẻ (card), phân trang thông minh.
+
+    - items_df   : DataFrame đã lọc, đúng thứ tự cần hiển thị.
+    - state_key  : khoá session_state RIÊNG cho từng danh sách (vd. "pg_tab6"),
+                    để mỗi danh sách nhớ trang hiện tại độc lập với nhau.
+    - render_fn  : hàm nhận 1 row → trả về HTML thẻ; mặc định dùng patient_card_html.
+    - page_size  : số dòng / trang (mặc định PAGE_SIZE = 10).
+
+    Tự động:
+      - Kẹp (clamp) số trang hiện tại nếu tổng số trang giảm (vd. sau khi đổi bộ lọc).
+      - Reset về trang 1 nếu nội dung danh sách thay đổi (theo độ dài + index đầu/cuối).
+      - Hiện thanh điều hướng « ‹ [số trang…] › » chỉ khi có nhiều hơn 1 trang.
+    """
+    render_fn = render_fn or patient_card_html
+    total = len(items_df)
+
+    if total == 0:
+        return
+
+    total_pages = max(1, (total + page_size - 1) // page_size)
+
+    # Dấu vân tay đơn giản của tập dữ liệu hiện tại, để tự reset về trang 1
+    # khi người dùng đổi bộ lọc / ngày / khoa (không cần callback riêng).
+    fingerprint = (total, tuple(items_df.index[:1]), tuple(items_df.index[-1:]))
+    fp_key = state_key + "_fp"
+
+    if state_key not in st.session_state:
+        st.session_state[state_key] = 1
+    if st.session_state.get(fp_key) != fingerprint:
+        st.session_state[fp_key] = fingerprint
+        st.session_state[state_key] = 1
+
+    # Kẹp trang hiện tại trong phạm vi hợp lệ
+    cur = min(max(1, st.session_state[state_key]), total_pages)
+    st.session_state[state_key] = cur
+
+    start = (cur - 1) * page_size
+    end = start + page_size
+    page_df = items_df.iloc[start:end]
+
+    cards_html = "".join(render_fn(row) for _, row in page_df.iterrows())
+    st.markdown(cards_html, unsafe_allow_html=True)
+
+    if total_pages > 1:
+        st.markdown(
+            f'<div class="pg-info">Trang <b>{cur}</b>/<b>{total_pages}</b> '
+            f'&nbsp;·&nbsp; Hiển thị <b>{start+1}–{min(end,total)}</b> / <b>{total}</b> bệnh nhân</div>',
+            unsafe_allow_html=True
+        )
+
+        nums = _paginate_page_numbers(cur, total_pages)
+        # Bố cục: [«] [‹] [ ...số trang... ] [›] [»]
+        cols = st.columns([1, 1] + [1] * len(nums) + [1, 1])
+
+        with cols[0]:
+            if st.button("«", key=f"{state_key}_first", disabled=(cur == 1),
+                         use_container_width=True):
+                st.session_state[state_key] = 1
+                st.rerun()
+        with cols[1]:
+            if st.button("‹", key=f"{state_key}_prev", disabled=(cur == 1),
+                         use_container_width=True):
+                st.session_state[state_key] = cur - 1
+                st.rerun()
+
+        for i, p in enumerate(nums):
+            with cols[2 + i]:
+                if p is None:
+                    st.markdown(
+                        '<div style="text-align:center;color:#94a3b8;padding-top:0.4rem">…</div>',
+                        unsafe_allow_html=True
+                    )
+                else:
+                    is_cur = (p == cur)
+                    if st.button(
+                        str(p), key=f"{state_key}_p{p}",
+                        disabled=is_cur, use_container_width=True,
+                        type=("primary" if is_cur else "secondary"),
+                    ):
+                        st.session_state[state_key] = p
+                        st.rerun()
+
+        with cols[2 + len(nums)]:
+            if st.button("›", key=f"{state_key}_next", disabled=(cur == total_pages),
+                         use_container_width=True):
+                st.session_state[state_key] = cur + 1
+                st.rerun()
+        with cols[3 + len(nums)]:
+            if st.button("»", key=f"{state_key}_last", disabled=(cur == total_pages),
+                         use_container_width=True):
+                st.session_state[state_key] = total_pages
+                st.rerun()
+
+
 def classify_khoa_group(khoa_val):
     """
     Phân loại bệnh nhân theo cột KHOA KHÁM CHỮA BỆNH thành 2 nhóm:
@@ -1263,8 +1394,13 @@ def upcoming_row_html(row2):
         '</tr>'
     )
 
-def render_upcoming_table(sub_df, empty_msg, dl_prefix, dl_key):
-    """Vẽ bảng chi tiết bệnh nhân + nút tải CSV cho 1 nhóm (kb / khác) trong 1 ngày."""
+def render_upcoming_table(sub_df, empty_msg, dl_prefix, dl_key, page_state_key=None):
+    """
+    Vẽ bảng chi tiết bệnh nhân + nút tải CSV cho 1 nhóm (kb / khác) trong 1 ngày.
+    Phân trang thông minh 10 bệnh nhân/trang nếu page_state_key được truyền vào
+    (khoá session_state riêng cho từng bảng, ví dụ 'pg_kb_2026-07-16'), để mỗi
+    bảng nhớ trang hiện tại độc lập, không ảnh hưởng các bảng khác trên trang.
+    """
     if len(sub_df) == 0:
         st.markdown(
             '<div style="text-align:center;padding:1.4rem 0.5rem;color:#94a3b8;font-size:0.82rem">'
@@ -1272,7 +1408,31 @@ def render_upcoming_table(sub_df, empty_msg, dl_prefix, dl_key):
             unsafe_allow_html=True
         )
         return
-    rows_html = "".join(upcoming_row_html(row2) for _, row2 in sub_df.iterrows())
+
+    total = len(sub_df)
+    state_key = page_state_key or (dl_key + "_pg")
+
+    if total > PAGE_SIZE:
+        total_pages = max(1, (total + PAGE_SIZE - 1) // PAGE_SIZE)
+        fingerprint = (total, tuple(sub_df.index[:1]), tuple(sub_df.index[-1:]))
+        fp_key = state_key + "_fp"
+        if state_key not in st.session_state:
+            st.session_state[state_key] = 1
+        if st.session_state.get(fp_key) != fingerprint:
+            st.session_state[fp_key] = fingerprint
+            st.session_state[state_key] = 1
+        cur = min(max(1, st.session_state[state_key]), total_pages)
+        st.session_state[state_key] = cur
+        start = (cur - 1) * PAGE_SIZE
+        end = start + PAGE_SIZE
+        page_df = sub_df.iloc[start:end]
+    else:
+        total_pages = 1
+        cur = 1
+        start, end = 0, total
+        page_df = sub_df
+
+    rows_html = "".join(upcoming_row_html(row2) for _, row2 in page_df.iterrows())
     st.markdown(
         '<div class="rtbl-wrap">'
         '<table class="rtbl"><thead><tr>'
@@ -1282,6 +1442,48 @@ def render_upcoming_table(sub_df, empty_msg, dl_prefix, dl_key):
         '<div class="scroll-hint">&#8592; Vuốt ngang để xem thêm &#8594;</div>',
         unsafe_allow_html=True
     )
+
+    if total_pages > 1:
+        st.markdown(
+            f'<div class="pg-info">Trang <b>{cur}</b>/<b>{total_pages}</b> '
+            f'&nbsp;·&nbsp; Hiển thị <b>{start+1}–{min(end,total)}</b> / <b>{total}</b> bệnh nhân</div>',
+            unsafe_allow_html=True
+        )
+        nums = _paginate_page_numbers(cur, total_pages)
+        cols = st.columns([1, 1] + [1] * len(nums) + [1, 1])
+        with cols[0]:
+            if st.button("«", key=f"{state_key}_first", disabled=(cur == 1), use_container_width=True):
+                st.session_state[state_key] = 1
+                st.rerun()
+        with cols[1]:
+            if st.button("‹", key=f"{state_key}_prev", disabled=(cur == 1), use_container_width=True):
+                st.session_state[state_key] = cur - 1
+                st.rerun()
+        for i, p in enumerate(nums):
+            with cols[2 + i]:
+                if p is None:
+                    st.markdown(
+                        '<div style="text-align:center;color:#94a3b8;padding-top:0.4rem">…</div>',
+                        unsafe_allow_html=True
+                    )
+                else:
+                    is_cur = (p == cur)
+                    if st.button(
+                        str(p), key=f"{state_key}_p{p}",
+                        disabled=is_cur, use_container_width=True,
+                        type=("primary" if is_cur else "secondary"),
+                    ):
+                        st.session_state[state_key] = p
+                        st.rerun()
+        with cols[2 + len(nums)]:
+            if st.button("›", key=f"{state_key}_next", disabled=(cur == total_pages), use_container_width=True):
+                st.session_state[state_key] = cur + 1
+                st.rerun()
+        with cols[3 + len(nums)]:
+            if st.button("»", key=f"{state_key}_last", disabled=(cur == total_pages), use_container_width=True):
+                st.session_state[state_key] = total_pages
+                st.rerun()
+
     dl_cols = [c for c in [COL_NAME, COL_BIRTH_YEAR, COL_PHONE, COL_EXAM_DATE, COL_EXAM_TIME,
                            COL_SPECIALTY, COL_KHOA, COL_DOCTOR, COL_SOURCE, COL_STATUS]
                if c in sub_df.columns]
@@ -1606,7 +1808,8 @@ if st.session_state.metrics:
                 render_upcoming_table(
                     kb_df,
                     "Không có bệnh nhân thuộc nhóm Khoa Khám Bệnh / chưa phân khoa trong ngày này.",
-                    f"kb_{udate_iso}", f"dl_kb_{udate_iso}"
+                    f"kb_{udate_iso}", f"dl_kb_{udate_iso}",
+                    page_state_key=f"pg_kb_{udate_iso}"
                 )
             with gtab2:
                 st.markdown(
@@ -1617,7 +1820,8 @@ if st.session_state.metrics:
                 render_upcoming_table(
                     khac_df,
                     "Không có bệnh nhân thuộc các khoa điều trị nội trú khác trong ngày này.",
-                    f"khac_{udate_iso}", f"dl_khac_{udate_iso}"
+                    f"khac_{udate_iso}", f"dl_khac_{udate_iso}",
+                    page_state_key=f"pg_khac_{udate_iso}"
                 )
 
         if HAS_DIALOG:
@@ -1823,11 +2027,8 @@ if st.session_state.metrics:
                 show_src_cols = [col for col in [COL_TIMESTAMP,COL_NAME,COL_EXAM_DATE,
                                                   COL_STATUS,COL_SPECIALTY,COL_SOURCE]
                                  if col in noi_list.columns]
-                MAX_SRC = 50
-                cards_src = "".join(patient_card_html(row) for _,row in noi_list[show_src_cols].head(MAX_SRC).iterrows())
-                st.markdown(cards_src, unsafe_allow_html=True)
-                if len(noi_list) > MAX_SRC:
-                    st.info(f"Hiển thị {MAX_SRC}/{len(noi_list)}. Tải CSV để xem đầy đủ.")
+                noi_list = noi_list.reset_index(drop=True)
+                render_paginated_cards(noi_list[show_src_cols], "pg_tab4_taikham")
                 csv_src = noi_list[show_src_cols].to_csv(index=False, encoding="utf-8-sig")
                 st.download_button(
                     label="⬇️ Tải danh sách tái khám (.csv)",
@@ -1957,14 +2158,10 @@ if st.session_state.metrics:
                         COL_KHOA, COL_PHONE, COL_SOURCE
                     ] if col in filtered_khoa_df.columns]
 
-                    MAX_KHOA = 50
-                    cards_khoa = "".join(
-                        patient_card_html(row)
-                        for _, row in filtered_khoa_df[show_khoa_cols].head(MAX_KHOA).iterrows()
-                    )
-                    st.markdown(cards_khoa, unsafe_allow_html=True)
-                    if len(filtered_khoa_df) > MAX_KHOA:
-                        st.info(f"Hiển thị {MAX_KHOA}/{len(filtered_khoa_df)} bệnh nhân. Tải CSV để xem đầy đủ.")
+                    filtered_khoa_df = filtered_khoa_df.reset_index(drop=True)
+                    # Khoá phân trang riêng theo khoa đang chọn để đổi khoa tự về trang 1
+                    khoa_pg_key = "pg_tab4_khoa_" + re.sub(r"\W+", "_", sel_khoa)
+                    render_paginated_cards(filtered_khoa_df[show_khoa_cols], khoa_pg_key)
 
                     khoa_fname = sel_khoa.replace(" ", "_") if sel_khoa != "Tất cả khoa" else "tat_ca_khoa"
                     csv_khoa = filtered_khoa_df[show_khoa_cols].to_csv(index=False, encoding="utf-8-sig")
@@ -2112,12 +2309,8 @@ if st.session_state.metrics:
 
         # Patient cards (mobile-friendly)
         if len(fdf) > 0:
-            MAX_CARDS = 50
-            show_df = fdf[show_cols].head(MAX_CARDS)
-            cards = "".join(patient_card_html(row) for _,row in show_df.iterrows())
-            st.markdown(cards, unsafe_allow_html=True)
-            if len(fdf) > MAX_CARDS:
-                st.info(f"Hiển thị {MAX_CARDS}/{len(fdf)} bệnh nhân. Tải file CSV để xem đầy đủ.")
+            show_df = fdf[show_cols].reset_index(drop=True)
+            render_paginated_cards(show_df, "pg_tab6_patients")
         else:
             st.markdown("""<div class="empty">
               <div class="empty-ico">🔍</div>
