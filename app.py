@@ -832,11 +832,32 @@ def parse_minh_lo_excel(uploaded_file):
                     return i
             return None
 
+        # ── Cột "Tuổi" trong file Minh Lộ thực chất là 2 cột con "Nam" / "Nữ"
+        # (mỗi bệnh nhân chỉ có 1 trong 2 cột này có giá trị, tùy giới tính).
+        # Nhãn "Nam" / "Nữ" nằm ở DÒNG PHỤ ngay dưới dòng tiêu đề chính,
+        # không nằm trong dòng tiêu đề chính (dòng tiêu đề chính chỉ ghi
+        # "Tuổi" 1 lần cho cả 2 cột). Vì vậy phải dò trực tiếp trong dòng
+        # phụ đó thay vì dò từ khóa "nam"/"nữ" trong dòng tiêu đề chính
+        # (cách cũ luôn thất bại vì dòng tiêu đề chính không chứa các từ này).
+        sub_row_idx = header_row_idx + 1
+        sub_row_vals = (
+            [str(v).strip().lower() for v in get_row(sub_row_idx)]
+            if sub_row_idx <= max_row else []
+        )
+        tuoi_nam_col = next((i for i, v in enumerate(sub_row_vals) if v == "nam"), None)
+        tuoi_nu_col  = next((i for i, v in enumerate(sub_row_vals) if v in ("nữ", "nu")), None)
+
+        # Fallback: nếu không tìm thấy dòng phụ (một số bản export có định
+        # dạng khác), thử dò từ khóa như cách cũ để không bị hỏng hoàn toàn.
+        if tuoi_nam_col is None and tuoi_nu_col is None:
+            tuoi_nam_col = find_col(["tuổi nam", "nam"])
+            tuoi_nu_col  = find_col(["tuổi nữ", "nữ", "nu"])
+
         idx = {
             "ma_yt":      find_col(["mã y tế", "ma y te"]),
             "ho_ten":     find_col(["họ tên", "ho ten", "bệnh nhân"]),
-            "tuoi_nam":   find_col(["nam"]),
-            "tuoi_nu":    find_col(["nữ", "nu"]),
+            "tuoi_nam":   tuoi_nam_col,
+            "tuoi_nu":    tuoi_nu_col,
             "dia_chi":    find_col(["địa chỉ", "dia chi"]),
             "bhyt":       find_col(["bhyt"]),
             "bac_sy":     find_col(["bác sỹ khám", "bac sy kham", "bác sĩ khám"]),
@@ -937,19 +958,36 @@ def parse_minh_lo_excel(uploaded_file):
                 pass
 
             tuoi_val = cv(vals0, "tuoi_nam") or cv(vals0, "tuoi_nu")
+            gioi_tinh = ""
+            if cv(vals0, "tuoi_nam"):
+                gioi_tinh = "Nam"
+            elif cv(vals0, "tuoi_nu"):
+                gioi_tinh = "Nữ"
+
             nam_sinh = ""
-            if re.search(r"\d+", tuoi_val):
-                try:
-                    age = int(re.findall(r"\d+", tuoi_val)[0])
-                    if 0 < age < 120:
-                        nam_sinh = str(datetime.now().year - age)
-                except Exception:
-                    pass
+            if tuoi_val:
+                nums = re.findall(r"\d+", tuoi_val)
+                if nums:
+                    n = int(nums[0])
+                    try:
+                        if "tháng" in tuoi_val.lower():
+                            # Trẻ nhỏ tính theo tháng tuổi (vd. "32 tháng tuổi")
+                            if 0 <= n < 1200:
+                                years_old = n // 12
+                                if 0 <= years_old < 120:
+                                    nam_sinh = str(datetime.now().year - years_old)
+                        else:
+                            # Người lớn tính theo năm tuổi (vd. "74 tuổi")
+                            if 0 < n < 120:
+                                nam_sinh = str(datetime.now().year - n)
+                    except Exception:
+                        pass
 
             data_rows.append({
                 "MÃ Y TẾ":             ma_yt,
                 "HỌ TÊN":              ho_ten,
                 "NĂM SINH (ước tính)": nam_sinh,
+                "GIỚI TÍNH":           gioi_tinh,
                 "ĐỊA CHỈ":             dia_chi,
                 "SỐ BHYT":             cv(vals0, "bhyt"),
                 "BÁC SĨ KHÁM":         cv(vals0, "bac_sy"),
@@ -1000,11 +1038,11 @@ def build_sheet_row(record, import_time_str):
       C - TRẠNG THÁI               = "" (trống)
       D - NGÀY KHÁM                = NGÀY HẸN từ Excel (dd/mm/yyyy)
       E - 1. HỌ VÀ TÊN BỆNH NHÂN  = HỌ TÊN từ Excel
-      F - NĂM SINH                 = N/A
+      F - NĂM SINH                 = NĂM SINH (ước tính) từ tuổi trong Excel
       G - 5. SỐ ĐIÊN THOẠI         = SỐ ĐIỆN THOẠI từ Excel
       H - 2. ĐỊA CHỈ (THÔN/XÃ)    = ĐỊA CHỈ từ Excel
       I - KHOA KHÁM CHỮA BỆNH      = KHOA HẸN từ Excel
-      J - 3. GIỚI TÍNH             = N/A
+      J - 3. GIỚI TÍNH             = GIỚI TÍNH suy ra từ cột Tuổi Nam/Nữ trong Excel
       K - 1. TRIỆU CHỨNG CHÍNH     = N/A
       L - 4. SỐ CĂN CƯỚC...        = N/A
       M - CHUYÊN KHOA MONG MUỐN    = "Other: Bệnh nhân điều trị nội khoa tái khám"
@@ -1028,11 +1066,11 @@ def build_sheet_row(record, import_time_str):
         "Bệnh nhân chưa khám/bỏ khám",                         # C - TRẠNG THÁI (mặc định dropdown)
         ngay_kham,                                              # D - NGÀY KHÁM (serial được convert trong push_to_sheet)
         record.get("HỌ TÊN", "N/A"),                           # E - HỌ VÀ TÊN BỆNH NHÂN
-        "N/A",                                                  # F - NĂM SINH
+        record.get("NĂM SINH (ước tính)") or "N/A",            # F - NĂM SINH (đã sửa: trước đây bị hard-code "N/A")
         record.get("SỐ ĐIỆN THOẠI", "N/A"),                    # G - SỐ ĐIÊN THOẠI
         record.get("ĐỊA CHỈ", "N/A"),                          # H - ĐỊA CHỈ (THÔN/XÃ)
         record.get("KHOA HẸN", "N/A"),                         # I - KHOA KHÁM CHỮA BỆNH
-        "N/A",                                                  # J - GIỚI TÍNH
+        record.get("GIỚI TÍNH") or "N/A",                      # J - GIỚI TÍNH (đã sửa: trước đây bị hard-code "N/A")
         "N/A",                                                  # K - TRIỆU CHỨNG CHÍNH
         "N/A",                                                  # L - SỐ CĂN CƯỚC
         "Other: Bệnh nhân điều trị nội khoa tái khám",         # M - CHUYÊN KHOA MONG MUỐN
