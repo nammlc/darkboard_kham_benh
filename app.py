@@ -433,6 +433,24 @@ div[data-testid="stDownloadButton"] button {
 div[data-testid="stHorizontalBlock"] div[data-testid="column"] .stButton>button {
     width:100%;
 }
+/* Nút phân trang: nhỏ gọn, vừa đủ nhìn (đè lên style nút to mặc định) */
+.pg-nav-marker + div[data-testid="stHorizontalBlock"] {
+    gap: 0.28rem !important;
+    margin-bottom: 0.6rem;
+}
+.pg-nav-marker + div[data-testid="stHorizontalBlock"] .stButton>button {
+    padding: 0 !important;
+    min-height: 1.7rem !important;
+    height: 1.7rem !important;
+    line-height: 1.7rem !important;
+    font-size: 0.68rem !important;
+    font-weight: 600 !important;
+    border-radius: 6px !important;
+    box-shadow: none !important;
+}
+.pg-nav-marker + div[data-testid="stHorizontalBlock"] .stButton>button:hover {
+    transform: none !important;
+}
 
 /* == FORCE LIGHT MODE — disable dark theme == */
 .stApp { background:#f0f4f8 !important; color:#1e293b !important; }
@@ -1208,6 +1226,22 @@ def patient_card_html(row):
 
 PAGE_SIZE = 10  # số bệnh nhân hiển thị mỗi trang, dùng chung cho mọi danh sách
 
+def _smart_rerun():
+    """
+    Rerun thông minh cho các nút phân trang.
+
+    Nếu đang chạy BÊN TRONG st.dialog (dialog hoạt động như 1 "fragment"),
+    dùng st.rerun(scope="fragment") để CHỈ chạy lại nội dung của dialog,
+    giữ nguyên cửa sổ dialog đang mở — tránh bị tắt khi bấm sang trang tiếp theo.
+    Nếu đang ở ngoài dialog (trang chính), scope="fragment" sẽ báo lỗi vì
+    không nằm trong fragment nào, khi đó rơi về st.rerun() bình thường
+    (rerun toàn trang) như cũ.
+    """
+    try:
+        st.rerun(scope="fragment")
+    except Exception:
+        st.rerun()
+
 def _paginate_page_numbers(current, total):
     """
     Sinh danh sách số trang thông minh kiểu '1 … 4 5 [6] 7 8 … 42'.
@@ -1285,24 +1319,25 @@ def render_paginated_cards(items_df, state_key, render_fn=None, page_size=PAGE_S
 
         nums = _paginate_page_numbers(cur, total_pages)
         # Bố cục: [«] [‹] [ ...số trang... ] [›] [»]
+        st.markdown('<div class="pg-nav-marker"></div>', unsafe_allow_html=True)
         cols = st.columns([1, 1] + [1] * len(nums) + [1, 1])
 
         with cols[0]:
             if st.button("«", key=f"{state_key}_first", disabled=(cur == 1),
                          use_container_width=True):
                 st.session_state[state_key] = 1
-                st.rerun()
+                _smart_rerun()
         with cols[1]:
             if st.button("‹", key=f"{state_key}_prev", disabled=(cur == 1),
                          use_container_width=True):
                 st.session_state[state_key] = cur - 1
-                st.rerun()
+                _smart_rerun()
 
         for i, p in enumerate(nums):
             with cols[2 + i]:
                 if p is None:
                     st.markdown(
-                        '<div style="text-align:center;color:#94a3b8;padding-top:0.4rem">…</div>',
+                        '<div style="text-align:center;color:#94a3b8;font-size:0.68rem;height:1.7rem;line-height:1.7rem">…</div>',
                         unsafe_allow_html=True
                     )
                 else:
@@ -1313,18 +1348,18 @@ def render_paginated_cards(items_df, state_key, render_fn=None, page_size=PAGE_S
                         type=("primary" if is_cur else "secondary"),
                     ):
                         st.session_state[state_key] = p
-                        st.rerun()
+                        _smart_rerun()
 
         with cols[2 + len(nums)]:
             if st.button("›", key=f"{state_key}_next", disabled=(cur == total_pages),
                          use_container_width=True):
                 st.session_state[state_key] = cur + 1
-                st.rerun()
+                _smart_rerun()
         with cols[3 + len(nums)]:
             if st.button("»", key=f"{state_key}_last", disabled=(cur == total_pages),
                          use_container_width=True):
                 st.session_state[state_key] = total_pages
-                st.rerun()
+                _smart_rerun()
 
 
 def classify_khoa_group(khoa_val):
@@ -1450,20 +1485,21 @@ def render_upcoming_table(sub_df, empty_msg, dl_prefix, dl_key, page_state_key=N
             unsafe_allow_html=True
         )
         nums = _paginate_page_numbers(cur, total_pages)
+        st.markdown('<div class="pg-nav-marker"></div>', unsafe_allow_html=True)
         cols = st.columns([1, 1] + [1] * len(nums) + [1, 1])
         with cols[0]:
             if st.button("«", key=f"{state_key}_first", disabled=(cur == 1), use_container_width=True):
                 st.session_state[state_key] = 1
-                st.rerun()
+                _smart_rerun()
         with cols[1]:
             if st.button("‹", key=f"{state_key}_prev", disabled=(cur == 1), use_container_width=True):
                 st.session_state[state_key] = cur - 1
-                st.rerun()
+                _smart_rerun()
         for i, p in enumerate(nums):
             with cols[2 + i]:
                 if p is None:
                     st.markdown(
-                        '<div style="text-align:center;color:#94a3b8;padding-top:0.4rem">…</div>',
+                        '<div style="text-align:center;color:#94a3b8;font-size:0.68rem;height:1.7rem;line-height:1.7rem">…</div>',
                         unsafe_allow_html=True
                     )
                 else:
@@ -1474,15 +1510,15 @@ def render_upcoming_table(sub_df, empty_msg, dl_prefix, dl_key, page_state_key=N
                         type=("primary" if is_cur else "secondary"),
                     ):
                         st.session_state[state_key] = p
-                        st.rerun()
+                        _smart_rerun()
         with cols[2 + len(nums)]:
             if st.button("›", key=f"{state_key}_next", disabled=(cur == total_pages), use_container_width=True):
                 st.session_state[state_key] = cur + 1
-                st.rerun()
+                _smart_rerun()
         with cols[3 + len(nums)]:
             if st.button("»", key=f"{state_key}_last", disabled=(cur == total_pages), use_container_width=True):
                 st.session_state[state_key] = total_pages
-                st.rerun()
+                _smart_rerun()
 
     dl_cols = [c for c in [COL_NAME, COL_BIRTH_YEAR, COL_PHONE, COL_EXAM_DATE, COL_EXAM_TIME,
                            COL_SPECIALTY, COL_KHOA, COL_DOCTOR, COL_SOURCE, COL_STATUS]
@@ -1747,9 +1783,9 @@ if st.session_state.metrics:
                          if c in sd_df.columns]
 
             # Mobile: card view; Desktop: table view
-            # Use cards always (works on both, better on mobile)
-            cards_html = "".join(patient_card_html(row) for _,row in sd_df[show_cols].iterrows())
-            st.markdown(cards_html, unsafe_allow_html=True)
+            # Use cards always (works on both, better on mobile), có phân trang
+            # 10 bệnh nhân/trang. Đổi ngày/bộ lọc sẽ tự động quay về trang 1.
+            render_paginated_cards(sd_df[show_cols], "pg_tab2_search")
 
             st.markdown("<br>", unsafe_allow_html=True)
             csv_day = sd_df[show_cols].to_csv(index=False, encoding="utf-8-sig")
