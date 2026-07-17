@@ -11,6 +11,7 @@ from google.oauth2.service_account import Credentials
 import json, os, re
 import openpyxl
 from datetime import datetime, timedelta, date
+from collections import Counter
 
 SHEET_ID        = "1EYiRA3ar41aue8DlbWA7JTKoLL0M2tiLTcZINhdMfTs"
 SHEET_NAME      = "Câu trả lời biểu mẫu 1"
@@ -993,6 +994,7 @@ def parse_minh_lo_excel(uploaded_file):
                 "BÁC SĨ KHÁM":         cv(vals0, "bac_sy"),
                 "TRIỆU CHỨNG":         cv(vals0, "trieu_chung"),
                 "CHẨN ĐOÁN":           cv(vals0, "chan_doan"),
+                "NGÀY LẬP":            to_date(cv(vals0, "ngay_lap")),
                 "NGÀY HẸN":            to_date(ngay_raw),
                 "GIỜ HẸN":             gio_hen,
                 "SỐ ĐIỆN THOẠI":       _fix_phone(cv(vals0, "dt")),
@@ -2581,23 +2583,134 @@ if st.session_state.metrics:
             else:
                 st.success(f"✅ Đọc được **{len(records)}** bệnh nhân từ file Excel")
 
-                # Preview table
+                # ═══════════════════════════════════════════════
+                # CHỌN "NGÀY LẬP" ĐỂ LỌC BỆNH NHÂN CẦN GHI VÀO SHEET
+                # (Minh Lộ liệt kê theo NGÀY VÀO VIỆN nên 1 file thường trải
+                #  dài cả tháng — chỉ những bệnh nhân có "Ngày lập" trùng
+                #  (các) ngày được chọn bên dưới mới được ghi vào Sheet.)
+                # ═══════════════════════════════════════════════
+                UNKNOWN_LAP = "__unknown__"
+                lap_counts = Counter(r.get("NGÀY LẬP") or UNKNOWN_LAP for r in records)
+
+                def _parse_dmy_safe(s):
+                    try:
+                        return datetime.strptime(s, "%d/%m/%Y")
+                    except Exception:
+                        return datetime.min
+
+                known_lap_dates = sorted(
+                    (d for d in lap_counts if d != UNKNOWN_LAP),
+                    key=_parse_dmy_safe, reverse=True
+                )
+                lap_order = known_lap_dates + (
+                    [UNKNOWN_LAP] if UNKNOWN_LAP in lap_counts else []
+                )
+
+                def _lap_label(d):
+                    if d == UNKNOWN_LAP:
+                        return f"❓ Không rõ ngày · {lap_counts[d]} BN"
+                    return f"📅 {d} · {lap_counts[d]} BN"
+
+                lap_pill_options = [_lap_label(d) for d in lap_order]
+                lap_option_to_date = dict(zip(lap_pill_options, lap_order))
+
+                today_str = today.strftime("%d/%m/%Y")
+                today_opt = next(
+                    (o for o, d in lap_option_to_date.items() if d == today_str), None
+                )
+                default_lap_selection = [today_opt] if today_opt else []
+
                 st.markdown(
-                    '<div class="sh"><div class="sh-dot" style="background:#3b82f6"></div>'
-                    '<span class="sh-txt">Xem Trước Dữ Liệu (10 bệnh nhân đầu)</span></div>',
+                    '<div class="sh"><div class="sh-dot" style="background:#f59e0b"></div>'
+                    '<span class="sh-txt">🗓️ Chọn Ngày Lập Để Ghi Vào Google Sheet</span></div>',
                     unsafe_allow_html=True
                 )
-                preview_df = pd.DataFrame(records[:10])
-                st.dataframe(preview_df, use_container_width=True, hide_index=True, height=280)
+                st.caption(
+                    "Minh Lộ liệt kê bệnh nhân theo ngày vào viện nên 1 file thường chứa "
+                    "nhiều \"Ngày lập\" khác nhau. Tích chọn 1 hoặc nhiều ngày bên dưới — "
+                    "ví dụ quên ghi hôm qua / hôm kia thì tích chọn thêm — chỉ những bệnh "
+                    "nhân được **tạo lịch hẹn** vào (các) ngày đã chọn mới được ghi vào Sheet."
+                )
 
-                # Stats
-                ngay_hen_list = [r["NGÀY HẸN"] for r in records if r.get("NGÀY HẸN")]
+                lap_key = "minhlo_lap_selected"
+                if lap_key not in st.session_state:
+                    st.session_state[lap_key] = default_lap_selection
+                else:
+                    # Loại các lựa chọn cũ không còn khớp với file vừa upload
+                    # (vd. người dùng vừa đổi sang file khác có ngày khác).
+                    st.session_state[lap_key] = [
+                        o for o in st.session_state[lap_key] if o in lap_pill_options
+                    ]
+
+                qa1, qa2, qa3 = st.columns(3)
+                with qa1:
+                    if st.button("✅ Chọn Tất Cả", use_container_width=True, key="minhlo_selall"):
+                        st.session_state[lap_key] = lap_pill_options.copy()
+                        _smart_rerun()
+                with qa2:
+                    if st.button("📅 Chỉ Hôm Nay", use_container_width=True, key="minhlo_seltoday",
+                                 disabled=(today_opt is None)):
+                        st.session_state[lap_key] = [today_opt] if today_opt else []
+                        _smart_rerun()
+                with qa3:
+                    if st.button("❌ Bỏ Chọn Tất Cả", use_container_width=True, key="minhlo_selnone"):
+                        st.session_state[lap_key] = []
+                        _smart_rerun()
+
+                HAS_PILLS = hasattr(st, "pills")
+                if HAS_PILLS:
+                    selected_lap_opts = st.pills(
+                        "Ngày lập", options=lap_pill_options, selection_mode="multi",
+                        key=lap_key, label_visibility="collapsed",
+                    ) or []
+                else:
+                    selected_lap_opts = st.multiselect(
+                        "Ngày lập", options=lap_pill_options,
+                        key=lap_key, label_visibility="collapsed",
+                    )
+
+                selected_lap_dates = set(lap_option_to_date[o] for o in selected_lap_opts)
+                if selected_lap_dates:
+                    filtered_records = [
+                        r for r in records
+                        if (r.get("NGÀY LẬP") or UNKNOWN_LAP) in selected_lap_dates
+                    ]
+                else:
+                    filtered_records = []
+                    st.warning("⚠️ Chưa chọn ngày lập nào — hãy tích chọn ít nhất 1 ngày để xem trước và ghi vào Sheet.")
+
+                st.markdown(
+                    f'<div class="pg-info" style="text-align:left;margin:0.3rem 0 1rem">'
+                    f'Đã chọn <b>{len(selected_lap_dates)}</b> ngày lập · '
+                    f'<b>{len(filtered_records)}</b> / {len(records)} bệnh nhân sẽ được ghi vào Sheet</div>',
+                    unsafe_allow_html=True
+                )
+
+                # Preview table (chỉ hiển thị các bản ghi ĐÃ CHỌN theo Ngày Lập)
+                st.markdown(
+                    '<div class="sh"><div class="sh-dot" style="background:#3b82f6"></div>'
+                    f'<span class="sh-txt">Xem Trước Dữ Liệu Đã Chọn '
+                    f'({min(10,len(filtered_records))}/{len(filtered_records)} bệnh nhân)</span></div>',
+                    unsafe_allow_html=True
+                )
+                if filtered_records:
+                    preview_df = pd.DataFrame(filtered_records[:10])
+                    st.dataframe(preview_df, use_container_width=True, hide_index=True, height=280)
+                else:
+                    st.info("Chưa có bệnh nhân nào được chọn để xem trước.")
+
+                # Stats (tính trên phần ĐÃ CHỌN, phản ánh đúng những gì sắp được ghi)
+                ngay_hen_list = [r["NGÀY HẸN"] for r in filtered_records if r.get("NGÀY HẸN")]
                 ngay_set = set(ngay_hen_list)
                 st.markdown(f"""
-                <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:0.6rem;margin:0.8rem 0">
+                <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:0.6rem;margin:0.8rem 0">
                   <div class="kc kc-b" style="padding:0.8rem 1rem">
-                    <div class="kc-lbl">Tổng Bệnh Nhân</div>
+                    <div class="kc-lbl">Tổng Trong File</div>
                     <div class="kc-val" style="font-size:1.6rem">{len(records)}</div>
+                  </div>
+                  <div class="kc kc-t" style="padding:0.8rem 1rem">
+                    <div class="kc-lbl">Đã Chọn Để Ghi</div>
+                    <div class="kc-val" style="font-size:1.6rem;color:#1d4ed8">{len(filtered_records)}</div>
                   </div>
                   <div class="kc kc-g" style="padding:0.8rem 1rem">
                     <div class="kc-lbl">Số Ngày Hẹn</div>
@@ -2605,35 +2718,40 @@ if st.session_state.metrics:
                   </div>
                   <div class="kc kc-v" style="padding:0.8rem 1rem">
                     <div class="kc-lbl">Chưa Khám</div>
-                    <div class="kc-val" style="font-size:1.6rem">{sum(1 for r in records if "chưa" in r.get("ĐÃ KHÁM","").lower())}</div>
+                    <div class="kc-val" style="font-size:1.6rem">{sum(1 for r in filtered_records if "chưa" in r.get("ĐÃ KHÁM","").lower())}</div>
                   </div>
                 </div>
                 """, unsafe_allow_html=True)
 
                 col_imp1, col_imp2 = st.columns([1, 1])
                 with col_imp1:
-                    # Download as CSV (no Google Sheet needed)
-                    csv_imp = pd.DataFrame(records).to_csv(index=False, encoding="utf-8-sig")
+                    # Download as CSV (no Google Sheet needed) — chỉ phần đã chọn
+                    csv_imp = pd.DataFrame(filtered_records).to_csv(index=False, encoding="utf-8-sig")
                     st.download_button(
-                        label="⬇️ Tải CSV (không cần Sheet)",
+                        label=f"⬇️ Tải CSV ({len(filtered_records)} BN đã chọn)",
                         data=csv_imp.encode("utf-8-sig"),
                         file_name=f"henkham_minhloc_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
                         mime="text/csv",
+                        disabled=(len(filtered_records) == 0),
                     )
                 with col_imp2:
-                    if st.button("📤 Import vào Google Sheet", use_container_width=True):
+                    if st.button(f"📤 Import {len(filtered_records)} BN Vào Google Sheet",
+                                 use_container_width=True, disabled=(len(filtered_records) == 0)):
                         if not creds_data:
                             st.error("❌ Chưa có credentials. Kiểm tra Streamlit Secrets.")
                         else:
-                            with st.spinner(f"Đang ghi {len(records)} bệnh nhân vào Sheet…"):
+                            with st.spinner(f"Đang ghi {len(filtered_records)} bệnh nhân vào Sheet…"):
                                 rows_ok, err_push = push_to_sheet(
-                                    creds_data, SHEET_ID, SHEET_NAME, records
+                                    creds_data, SHEET_ID, SHEET_NAME, filtered_records
                                 )
                             if err_push:
                                 st.error(f"❌ {err_push}")
                                 st.info("💡 Nếu lỗi Permission: vào Google Sheet → Share → đổi Service Account từ Viewer thành Editor.")
                             else:
-                                st.success(f"✅ Đã thêm thành công **{rows_ok}** dòng vào sheet chính!")
+                                st.success(
+                                    f"✅ Đã thêm thành công **{rows_ok}** dòng vào sheet chính "
+                                    f"(theo {len(selected_lap_dates)} ngày lập đã chọn)!"
+                                )
                                 st.info("🔄 Quay lại tab **📊 Tổng Quan** và nhấn **Làm mới** để xem dữ liệu mới.")
                                 st.balloons()
                                 # Invalidate cache so next refresh loads new data
