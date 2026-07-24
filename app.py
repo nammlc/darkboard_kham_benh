@@ -27,6 +27,7 @@ COL_PHONE       = "5. SỐ ĐIÊN THOẠI"
 COL_BIRTH_YEAR  = "NĂM SINH"
 COL_EXAM_TIME   = "GIỜ KHÁM DỰ KIẾN"
 COL_KHOA        = "KHOA KHÁM CHỮA BỆNH"
+COL_AGE         = "TUỔI"
 STATUS_ATTENDED     = "BỆNH NHÂN ĐÃ KHÁM"
 STATUS_NOT_ATTENDED = "BỆNH NHÂN CHƯA KHÁM / BỎ KHÁM"
 SCOPES = [
@@ -1070,6 +1071,7 @@ def parse_minh_lo_excel(uploaded_file):
             data_rows.append({
                 "MÃ Y TẾ":             ma_yt,
                 "HỌ TÊN":              ho_ten,
+                "TUỔI":                tuoi_val or "",
                 "NĂM SINH (ước tính)": nam_sinh,
                 "GIỚI TÍNH":           gioi_tinh,
                 "ĐỊA CHỈ":             dia_chi,
@@ -1092,7 +1094,8 @@ def parse_minh_lo_excel(uploaded_file):
         import traceback
         return [], f"Lỗi đọc file: {type(e).__name__}: {e}"
 
-# Full ordered column list of the Google Sheet (khớp đúng thứ tự cột thực tế)
+# Danh sách cột "mặc định" — chỉ dùng làm PHƯƠNG ÁN DỰ PHÒNG nếu vì lý do
+# nào đó không đọc được dòng tiêu đề thực tế trên Google Sheet (xem push_to_sheet).
 SHEET_COLUMNS = [
     "Dấu thời gian",                                                    # A  - import timestamp
     "NGUỒN BỆNH NHÂN",                                                  # B  - fixed value
@@ -1100,6 +1103,7 @@ SHEET_COLUMNS = [
     "NGÀY KHÁM",                                                        # D  - Ngày hẹn
     "1. HỌ VÀ TÊN BỆNH NHÂN",                                          # E  - Họ tên
     "NĂM SINH",                                                         # F  - N/A
+    "TUỔI",                                                             #    - Tuổi (ghi kèm để tránh lệch năm sinh)
     "5. SỐ ĐIÊN THOẠI",                                                 # G  - Điện thoại
     "2. ĐỊA CHỈ (THÔN/XÃ)",                                            # H  - Địa chỉ
     "KHOA KHÁM CHỮA BỆNH",                                              # I  - Khoa hẹn
@@ -1113,67 +1117,67 @@ SHEET_COLUMNS = [
     "ĐỒNG Ý CÁC ĐIỀU KHOẢN ĐẶT LỊCH KHÁM ONLINE TẠI BVĐK TÂM ĐỨC CẦU QUAN",  # Q - CÓ
 ]
 
-def build_sheet_row(record, import_time_str):
+def build_sheet_field_map(record, import_time_str):
     """
-    Map one Minh Lo Excel record → one row matching SHEET_COLUMNS order.
+    Map một bản ghi Minh Lộ → dict {tên cột trên Google Sheet: giá trị}.
 
-    Thứ tự cột Google Sheet thực tế:
-      A - Dấu thời gian            = thời gian import file
-      B - NGUỒN BỆNH NHÂN          = "BỆNH NHÂN ĐIỀU TRỊ NỘI KHOA TÁI KHÁM" (IN HOA)
-      C - TRẠNG THÁI               = "" (trống)
-      D - NGÀY KHÁM                = NGÀY HẸN từ Excel (dd/mm/yyyy)
-      E - 1. HỌ VÀ TÊN BỆNH NHÂN  = HỌ TÊN từ Excel
-      F - NĂM SINH                 = NĂM SINH (ước tính) từ tuổi trong Excel
-      G - 5. SỐ ĐIÊN THOẠI         = SỐ ĐIỆN THOẠI từ Excel
-      H - 2. ĐỊA CHỈ (THÔN/XÃ)    = ĐỊA CHỈ từ Excel
-      I - KHOA KHÁM CHỮA BỆNH      = KHOA HẸN từ Excel (IN HOA)
-      J - 3. GIỚI TÍNH             = GIỚI TÍNH suy ra từ cột Tuổi Nam/Nữ trong Excel
-      K - 1. TRIỆU CHỨNG CHÍNH     = N/A
-      L - 4. SỐ CĂN CƯỚC...        = N/A
-      M - CHUYÊN KHOA MONG MUỐN    = "Other: Bệnh nhân điều trị nội khoa tái khám"
-      N - BÁC SĨ MONG MUỐN         = N/A
-      O - GIỜ KHÁM DỰ KIẾN         = N/A
-      P - CAM KẾT...               = "CÓ"
-      Q - ĐỒNG Ý...                = "CÓ"
+    Dùng dict theo TÊN CỘT (thay vì 1 list theo vị trí cố định) để
+    push_to_sheet có thể ghép đúng ô bất kể cột "TUỔI" (hay cột nào khác)
+    nằm ở vị trí nào trên Sheet thực tế — không phụ thuộc thứ tự cột cứng.
 
-    Lưu ý:
-      - Ngày khám: ghi dạng số serial Google Sheets (push_to_sheet xử lý convert),
-        Google Sheet tự hiển thị đúng format Date, không có dấu apostrophe.
-      - Số điện thoại: ghi dạng string (đã có số 0 đầu từ _fix_phone).
-      - Trạng thái: mặc định "BỆNH NHÂN CHƯA KHÁM/BỎ KHÁM" (khớp dropdown, IN HOA).
+      Dấu thời gian                = thời gian import file
+      NGUỒN BỆNH NHÂN              = "BỆNH NHÂN ĐIỀU TRỊ NỘI KHOA TÁI KHÁM" (IN HOA)
+      TRẠNG THÁI                   = "BỆNH NHÂN CHƯA KHÁM/BỎ KHÁM" (IN HOA, mặc định dropdown)
+      NGÀY KHÁM                    = NGÀY HẸN từ Excel (dd/mm/yyyy)
+      HỌ VÀ TÊN BỆNH NHÂN          = HỌ TÊN từ Excel
+      NĂM SINH                     = ước tính từ Tuổi trong Excel (có thể lệch ±1 năm
+                                      vì Minh Lộ chỉ xuất Tuổi, không có ngày sinh)
+      TUỔI                         = Tuổi THẬT lấy trực tiếp từ Excel Minh Lộ (chính xác,
+                                      không bị lệch như Năm sinh ước tính)
+      SỐ ĐIỆN THOẠI                = SỐ ĐIỆN THOẠI từ Excel
+      ĐỊA CHỈ (THÔN/XÃ)           = ĐỊA CHỈ từ Excel
+      KHOA KHÁM CHỮA BỆNH          = KHOA HẸN từ Excel (IN HOA)
+      GIỚI TÍNH                    = suy ra từ cột Tuổi Nam/Nữ trong Excel
+      TRIỆU CHỨNG CHÍNH / SỐ CĂN CƯỚC / BÁC SĨ MONG MUỐN / GIỜ KHÁM DỰ KIẾN = N/A
+      CHUYÊN KHOA MONG MUỐN        = "Other: Bệnh nhân điều trị nội khoa tái khám"
+      CAM KẾT / ĐỒNG Ý             = "CÓ"
     """
-    # Format ngày: đảm bảo dd/mm/yyyy, nếu không có thì để N/A
     ngay_kham = record.get("NGÀY HẸN", "N/A") or "N/A"
-
-    # Theo yêu cầu: 3 cột NGUỒN BỆNH NHÂN, TRẠNG THÁI, KHOA KHÁM CHỮA BỆNH
-    # luôn được ghi dạng CHỮ HOA khi import từ Minh Lộ.
+    # 3 cột NGUỒN BỆNH NHÂN, TRẠNG THÁI, KHOA KHÁM CHỮA BỆNH luôn IN HOA.
     khoa_hen = str(record.get("KHOA HẸN", "N/A") or "N/A").upper()
+    tuoi_val = record.get("TUỔI") or "N/A"
 
-    return [
-        import_time_str,                                        # A - Dấu thời gian
-        "BỆNH NHÂN ĐIỀU TRỊ NỘI KHOA TÁI KHÁM",                # B - NGUỒN BỆNH NHÂN (IN HOA)
-        "BỆNH NHÂN CHƯA KHÁM/BỎ KHÁM",                         # C - TRẠNG THÁI (IN HOA, mặc định dropdown)
-        ngay_kham,                                              # D - NGÀY KHÁM (serial được convert trong push_to_sheet)
-        record.get("HỌ TÊN", "N/A"),                           # E - HỌ VÀ TÊN BỆNH NHÂN
-        record.get("NĂM SINH (ước tính)") or "N/A",            # F - NĂM SINH (đã sửa: trước đây bị hard-code "N/A")
-        record.get("SỐ ĐIỆN THOẠI", "N/A"),                    # G - SỐ ĐIÊN THOẠI
-        record.get("ĐỊA CHỈ", "N/A"),                          # H - ĐỊA CHỈ (THÔN/XÃ)
-        khoa_hen,                                               # I - KHOA KHÁM CHỮA BỆNH (IN HOA)
-        record.get("GIỚI TÍNH") or "N/A",                      # J - GIỚI TÍNH (đã sửa: trước đây bị hard-code "N/A")
-        "N/A",                                                  # K - TRIỆU CHỨNG CHÍNH
-        "N/A",                                                  # L - SỐ CĂN CƯỚC
-        "Other: Bệnh nhân điều trị nội khoa tái khám",         # M - CHUYÊN KHOA MONG MUỐN
-        "N/A",                                                  # N - BÁC SĨ MONG MUỐN
-        "N/A",                                                  # O - GIỜ KHÁM DỰ KIẾN
-        "CÓ",                                                   # P - CAM KẾT
-        "CÓ",                                                   # Q - ĐỒNG Ý
-    ]
+    return {
+        "Dấu thời gian":                                                           import_time_str,
+        "NGUỒN BỆNH NHÂN":                                                         "BỆNH NHÂN ĐIỀU TRỊ NỘI KHOA TÁI KHÁM",
+        "TRẠNG THÁI":                                                              "BỆNH NHÂN CHƯA KHÁM/BỎ KHÁM",
+        "NGÀY KHÁM":                                                               ngay_kham,
+        "1. HỌ VÀ TÊN BỆNH NHÂN":                                                 record.get("HỌ TÊN", "N/A"),
+        "NĂM SINH":                                                                record.get("NĂM SINH (ước tính)") or "N/A",
+        "TUỔI":                                                                    tuoi_val,
+        "5. SỐ ĐIÊN THOẠI":                                                        record.get("SỐ ĐIỆN THOẠI", "N/A"),
+        "2. ĐỊA CHỈ (THÔN/XÃ)":                                                   record.get("ĐỊA CHỈ", "N/A"),
+        "KHOA KHÁM CHỮA BỆNH":                                                     khoa_hen,
+        "3. GIỚI TÍNH":                                                            record.get("GIỚI TÍNH") or "N/A",
+        "1. TRIỆU CHỨNG CHÍNH":                                                    "N/A",
+        "4. SỐ CĂN CƯỚC CÔNG DÂN - CHỨNG MINH THƯ":                               "N/A",
+        "CHUYÊN KHOA MONG MUỐN KHÁM":                                              "Other: Bệnh nhân điều trị nội khoa tái khám",
+        "BÁC SĨ MONG MUỐN ( nếu có)":                                              "N/A",
+        "GIỜ KHÁM DỰ KIẾN":                                                        "N/A",
+        "1. CAM KẾT CÁC THÔNG TIN LÀ THÔNG TIN ĐÚNG, CHỊU TRÁCH NHIỆM TRƯỚC PHÁP LUẬT TRƯỚC NHỮNG THÔNG TIN ĐÃ CUNG CẤP TRÊN": "CÓ",
+        "ĐỒNG Ý CÁC ĐIỀU KHOẢN ĐẶT LỊCH KHÁM ONLINE TẠI BVĐK TÂM ĐỨC CẦU QUAN":    "CÓ",
+    }
 
 
 def push_to_sheet(creds_data, sheet_id, sheet_name, records):
     """
-    Append parsed Minh Lo records into the MAIN Google Sheet tab,
-    mapping each field to the correct column position.
+    Append parsed Minh Lo records into the MAIN Google Sheet tab.
+
+    Ghép giá trị vào ĐÚNG CỘT theo TÊN TIÊU ĐỀ đọc trực tiếp từ dòng 1 của
+    Sheet thực tế (không giả định vị trí cột cố định) — nên nếu người dùng
+    thêm/xóa/đổi chỗ cột nào đó (ví dụ thêm cột "TUỔI") trên Google Sheet,
+    việc ghi dữ liệu vẫn tự động khớp đúng cột mà không cần sửa code.
+    Cột nào trên Sheet không nằm trong danh sách trường đã biết sẽ được để trống.
     Returns (rows_written, error_msg)
     """
     try:
@@ -1187,34 +1191,31 @@ def push_to_sheet(creds_data, sheet_id, sheet_name, records):
         # Build timestamp once for whole import batch
         import_time_str = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
 
-        # Build rows in sheet column order
-        rows_to_append = [build_sheet_row(r, import_time_str) for r in records]
-
-        # ── Tìm dòng trống đầu tiên để append ──
+        # ── Đọc dòng tiêu đề THỰC TẾ trên Sheet để biết đúng thứ tự cột ──
         all_vals = ws.get_all_values()
-        next_row = len(all_vals) + 1  # 1-indexed, dòng đầu tiên trống
+        headers = [h.strip() for h in all_vals[0]] if all_vals else []
+        if not headers:
+            headers = SHEET_COLUMNS  # phương án dự phòng nếu Sheet trống
 
-        # ── Chuyển chuỗi ngày dd/mm/yyyy → số serial Google Sheets ──
-        # Cột D (index 3) chứa NGÀY KHÁM. Cột NGÀY KHÁM có format Date trong
-        # sheet nên phải ghi bằng số serial (không phải text) để tránh dấu '.
-        # Google Sheets serial = số ngày kể từ 30/12/1899.
-        DATE_COL_IDX = 3  # cột D, 0-indexed
+        date_col_idx = headers.index(COL_EXAM_DATE) if COL_EXAM_DATE in headers else None
 
         def date_str_to_serial(s):
             """Chuyển 'dd/mm/yyyy' → số serial Google Sheets (float).
             Trả về chuỗi gốc nếu không parse được."""
             try:
-                d = datetime.strptime(s.strip(), "%d/%m/%Y")
+                d = datetime.strptime(str(s).strip(), "%d/%m/%Y")
                 delta = d - datetime(1899, 12, 30)
                 return delta.days  # số nguyên, Google Sheets tự hiểu là Date
             except Exception:
                 return s  # giữ nguyên nếu không parse được
 
-        # Chuyển đổi ngày trong từng row
+        # Build rows khớp ĐÚNG THEO TÊN CỘT thật trên Sheet
         converted_rows = []
-        for row in rows_to_append:
-            row = list(row)
-            row[DATE_COL_IDX] = date_str_to_serial(str(row[DATE_COL_IDX]))
+        for r in records:
+            field_map = build_sheet_field_map(r, import_time_str)
+            row = [field_map.get(h, "") for h in headers]
+            if date_col_idx is not None:
+                row[date_col_idx] = date_str_to_serial(row[date_col_idx])
             converted_rows.append(row)
 
         # ── Ghi bằng Sheets API với USER_ENTERED ──
