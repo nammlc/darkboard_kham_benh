@@ -416,6 +416,8 @@ div[class*="_mrow_"] div[data-testid="stHorizontalBlock"] { align-items:center; 
 }
 .mrow-badge-att { background:#d1fae5; color:#065f46; }
 .mrow-badge-nos { background:#fee2e2; color:#991b1b; }
+.mrow-status-wrap { display:flex; align-items:center; justify-content:center; height:100%; padding:0.2rem 0; }
+.mrow-status-wrap .mrow-badge { text-align:center; white-space:normal; line-height:1.3; }
 
 /* Nút "✏️ Sửa" — xanh dương */
 div[class*="editbtn_"] .stButton>button {
@@ -1575,8 +1577,13 @@ def khoa_badge_html(khoa_val):
     label = s if len(s) <= 32 else s[:32] + "…"
     return f'<span class="khoa-badge {cls}">{label}</span>'
 
-def upcoming_row_html(row2):
-    """Dựng 1 dòng <tr> cho bảng chi tiết bệnh nhân (tab 3 ngày tới)."""
+def patient_row_info_html(row2):
+    """
+    Dựng khối thông tin (tên + các thẻ chi tiết) cho MỘT bệnh nhân, dùng làm
+    cột đầu tiên của mỗi "hàng" trong danh sách bệnh nhân (tab 3 Ngày Tới).
+    Trạng thái + nút Sửa/Xóa được render riêng ở các cột kế tiếp bởi
+    render_upcoming_table, không nằm trong khối này.
+    """
     name  = str(row2.get(COL_NAME,"") or "—")
     byr   = str(row2.get(COL_BIRTH_YEAR,"") or "—")
     phone = str(row2.get(COL_PHONE,"") or "—")
@@ -1584,41 +1591,37 @@ def upcoming_row_html(row2):
     spec  = str(row2.get(COL_SPECIALTY,"") or "—")
     src_raw = str(row2.get(COL_SOURCE,"") or "")
     src_badge = source_badge(src_raw)
-    src_show  = src_badge if src_badge else "—"
-    stat  = str(row2.get(COL_STATUS,"") or "—")
     khoa_show = khoa_badge_html(row2.get(COL_KHOA,""))
 
     if len(etime) >= 5 and ":" in etime:
         etime = etime[:5]
-    if len(spec) > 26:
-        spec = spec[:26] + "…"
-
-    if STATUS_ATTENDED.upper() in stat.upper():
-        stat_style = "color:#059669;font-weight:700"
-    else:
-        stat_style = "color:#475569"
+    if len(spec) > 30:
+        spec = spec[:30] + "…"
 
     if phone not in ("—","N/A","nan",""):
         tel_digits = "".join(ch for ch in phone if ch.isdigit() or ch == "+")
         phone_show = (
             '<a href="tel:' + tel_digits + '" '
-            'style="color:#1d4ed8;font-weight:700;text-decoration:none">'
+            'style="color:#1d4ed8;font-weight:700;text-decoration:none">📞 '
             + phone + '</a>'
         )
     else:
-        phone_show = phone
+        phone_show = '<span style="color:#94a3b8">📞 ' + phone + '</span>'
 
     return (
-        '<tr>'
-        '<td style="font-weight:600;color:#0f172a">' + name + '</td>'
-        '<td style="font-family:JetBrains Mono,monospace;color:#1d4ed8">' + etime + '</td>'
-        '<td>' + byr + '</td>'
-        '<td>' + phone_show + '</td>'
-        '<td style="max-width:130px;white-space:normal">' + spec + '</td>'
-        '<td style="max-width:150px;white-space:normal">' + khoa_show + '</td>'
-        '<td>' + src_show + '</td>'
-        '<td style="' + stat_style + '">' + stat + '</td>'
-        '</tr>'
+        '<div class="mrow-info">'
+        '<div class="mrow-name">👤 ' + name + '</div>'
+        '<div class="pt-row" style="margin:0.3rem 0 0">'
+        '<span class="pt-tag pt-tag-date">🕒 ' + etime + '</span>'
+        '<span class="pt-tag pt-tag-spec">🎂 ' + byr + '</span>'
+        '<span class="pt-tag pt-tag-spec">' + phone_show + '</span>'
+        '</div>'
+        '<div class="pt-row" style="margin:0.25rem 0 0">'
+        '<span class="pt-tag pt-tag-doc">🩺 ' + spec + '</span>'
+        + khoa_show
+        + (src_badge or '')
+        + '</div>'
+        '</div>'
     )
 
 def render_upcoming_table(sub_df, empty_msg, dl_prefix, dl_key, page_state_key=None):
@@ -1659,17 +1662,6 @@ def render_upcoming_table(sub_df, empty_msg, dl_prefix, dl_key, page_state_key=N
         start, end = 0, total
         page_df = sub_df
 
-    rows_html = "".join(upcoming_row_html(row2) for _, row2 in page_df.iterrows())
-    st.markdown(
-        '<div class="rtbl-wrap">'
-        '<table class="rtbl"><thead><tr>'
-        '<th>Họ Tên</th><th>Giờ Khám</th><th>Năm Sinh</th><th>Số ĐT</th>'
-        '<th>Chuyên Khoa</th><th>Khoa Khám Chữa Bệnh</th><th>Nguồn BN</th><th>Trạng Thái</th>'
-        '</tr></thead><tbody>' + rows_html + '</tbody></table></div>'
-        '<div class="scroll-hint">&#8592; Vuốt ngang để xem thêm &#8594;</div>',
-        unsafe_allow_html=True
-    )
-
     if total_pages > 1:
         st.markdown(
             f'<div class="pg-info">Trang <b>{cur}</b>/<b>{total_pages}</b> '
@@ -1707,36 +1699,28 @@ def render_upcoming_table(sub_df, empty_msg, dl_prefix, dl_key, page_state_key=N
                         st.session_state[state_key] = cur + 1
                         _smart_rerun()
 
-    # ── QUẢN LÝ: nút "✏️ Sửa" / "🗑️ Xóa" cho từng bệnh nhân (đúng trang đang xem) ──
+    # ── DANH SÁCH BỆNH NHÂN: mỗi bệnh nhân 1 hàng, đầy đủ thông tin,
+    # có nút "✏️ Sửa" / "🗑️ Xóa" ngay ở CUỐI mỗi hàng. ──
     HAS_DIALOG = hasattr(st, "dialog")
-    st.markdown(
-        '<div class="mrow-section-hd">⚙️ Quản Lý — Sửa Trạng Thái / Xóa Bệnh Nhân</div>',
-        unsafe_allow_html=True
-    )
     for m_idx, m_row in page_df.iterrows():
-        # m_idx là index gốc từ Google Sheet (0-based, dòng dữ liệu đầu = index 0
+        # m_idx là index gốc lấy từ Google Sheet (0-based, dòng dữ liệu đầu = index 0
         # = dòng 2 trên Sheet, vì dòng 1 là tiêu đề) → dòng thực tế = m_idx + 2.
         sheet_row = int(m_idx) + 2
-        m_name  = str(m_row.get(COL_NAME, "") or "—")
-        m_etime = str(m_row.get(COL_EXAM_TIME, "") or "—")
-        if len(m_etime) >= 5 and ":" in m_etime:
-            m_etime = m_etime[:5]
         m_status = str(m_row.get(COL_STATUS, "") or "—")
         m_is_att = STATUS_ATTENDED.upper() in m_status.upper()
         m_badge_cls = "mrow-badge-att" if m_is_att else "mrow-badge-nos"
+        info_html = patient_row_info_html(m_row)
 
         with st.container(key=f"mrow_{dl_key}_{sheet_row}"):
-            mc1, mc2, mc3 = st.columns([5, 1.3, 1.3])
+            mc1, mc2, mc3, mc4 = st.columns([4.4, 1.7, 0.85, 0.85])
             with mc1:
+                st.markdown(info_html, unsafe_allow_html=True)
+            with mc2:
                 st.markdown(
-                    '<div class="mrow-info">'
-                    f'<span class="mrow-name">👤 {m_name}</span>'
-                    f'<span class="mrow-sub">🕒 {m_etime}</span>'
-                    f'<span class="mrow-badge {m_badge_cls}">{m_status}</span>'
-                    '</div>',
+                    f'<div class="mrow-status-wrap"><span class="mrow-badge {m_badge_cls}">{m_status}</span></div>',
                     unsafe_allow_html=True
                 )
-            with mc2:
+            with mc3:
                 with st.container(key=f"editbtn_{dl_key}_{sheet_row}"):
                     if st.button("✏️ Sửa", key=f"btn_edit_{dl_key}_{sheet_row}", use_container_width=True):
                         if HAS_DIALOG:
@@ -1749,19 +1733,20 @@ def render_upcoming_table(sub_df, empty_msg, dl_prefix, dl_key, page_state_key=N
                             # cùng (top-level) ngay sau khi rerun xong.
                             st.session_state.pending_action = {
                                 "type": "edit", "sheet_row": sheet_row,
-                                "name": m_name, "status": m_status,
+                                "name": str(m_row.get(COL_NAME, "") or "—"), "status": m_status,
                             }
                             st.rerun()
                         else:
                             st.session_state[f"inline_edit_open_{sheet_row}"] = True
                             st.session_state[f"inline_del_open_{sheet_row}"] = False
                             st.rerun()
-            with mc3:
+            with mc4:
                 with st.container(key=f"delbtn_{dl_key}_{sheet_row}"):
                     if st.button("🗑️ Xóa", key=f"btn_del_{dl_key}_{sheet_row}", use_container_width=True):
                         if HAS_DIALOG:
                             st.session_state.pending_action = {
-                                "type": "delete", "sheet_row": sheet_row, "name": m_name,
+                                "type": "delete", "sheet_row": sheet_row,
+                                "name": str(m_row.get(COL_NAME, "") or "—"),
                             }
                             st.rerun()
                         else:
@@ -1772,9 +1757,12 @@ def render_upcoming_table(sub_df, empty_msg, dl_prefix, dl_key, page_state_key=N
         # Streamlit cũ không có st.dialog → hiện form Sửa/Xóa ngay dưới hàng
         if not HAS_DIALOG:
             if st.session_state.get(f"inline_edit_open_{sheet_row}"):
-                render_inline_edit_form(sheet_row, m_name, m_status)
+                render_inline_edit_form(sheet_row, str(m_row.get(COL_NAME, "") or "—"), m_status)
             if st.session_state.get(f"inline_del_open_{sheet_row}"):
-                render_inline_delete_form(sheet_row, m_name)
+                render_inline_delete_form(sheet_row, str(m_row.get(COL_NAME, "") or "—"))
+
+    st.markdown('<div class="scroll-hint">💡 Vuốt màn hình để xem đầy đủ thông tin mỗi hàng</div>',
+                unsafe_allow_html=True)
 
     dl_cols = [c for c in [COL_NAME, COL_BIRTH_YEAR, COL_PHONE, COL_EXAM_DATE, COL_EXAM_TIME,
                            COL_SPECIALTY, COL_KHOA, COL_DOCTOR, COL_SOURCE, COL_STATUS]
@@ -1787,6 +1775,7 @@ def render_upcoming_table(sub_df, empty_msg, dl_prefix, dl_key, page_state_key=N
         mime="text/csv",
         key=dl_key,
     )
+
 
 def _do_save_status(sheet_row, new_status, close_keys=()):
     """Ghi trạng thái mới lên Google Sheet, làm mới cache, rồi rerun."""
