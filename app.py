@@ -1119,14 +1119,14 @@ def build_sheet_row(record, import_time_str):
 
     Thứ tự cột Google Sheet thực tế:
       A - Dấu thời gian            = thời gian import file
-      B - NGUỒN BỆNH NHÂN          = "Bệnh nhân điều trị nội khoa tái khám"
+      B - NGUỒN BỆNH NHÂN          = "BỆNH NHÂN ĐIỀU TRỊ NỘI KHOA TÁI KHÁM" (IN HOA)
       C - TRẠNG THÁI               = "" (trống)
       D - NGÀY KHÁM                = NGÀY HẸN từ Excel (dd/mm/yyyy)
       E - 1. HỌ VÀ TÊN BỆNH NHÂN  = HỌ TÊN từ Excel
       F - NĂM SINH                 = NĂM SINH (ước tính) từ tuổi trong Excel
       G - 5. SỐ ĐIÊN THOẠI         = SỐ ĐIỆN THOẠI từ Excel
       H - 2. ĐỊA CHỈ (THÔN/XÃ)    = ĐỊA CHỈ từ Excel
-      I - KHOA KHÁM CHỮA BỆNH      = KHOA HẸN từ Excel
+      I - KHOA KHÁM CHỮA BỆNH      = KHOA HẸN từ Excel (IN HOA)
       J - 3. GIỚI TÍNH             = GIỚI TÍNH suy ra từ cột Tuổi Nam/Nữ trong Excel
       K - 1. TRIỆU CHỨNG CHÍNH     = N/A
       L - 4. SỐ CĂN CƯỚC...        = N/A
@@ -1140,21 +1140,25 @@ def build_sheet_row(record, import_time_str):
       - Ngày khám: ghi dạng số serial Google Sheets (push_to_sheet xử lý convert),
         Google Sheet tự hiển thị đúng format Date, không có dấu apostrophe.
       - Số điện thoại: ghi dạng string (đã có số 0 đầu từ _fix_phone).
-      - Trạng thái: mặc định "Bệnh nhân chưa khám/bỏ khám" (khớp dropdown).
+      - Trạng thái: mặc định "BỆNH NHÂN CHƯA KHÁM/BỎ KHÁM" (khớp dropdown, IN HOA).
     """
     # Format ngày: đảm bảo dd/mm/yyyy, nếu không có thì để N/A
     ngay_kham = record.get("NGÀY HẸN", "N/A") or "N/A"
 
+    # Theo yêu cầu: 3 cột NGUỒN BỆNH NHÂN, TRẠNG THÁI, KHOA KHÁM CHỮA BỆNH
+    # luôn được ghi dạng CHỮ HOA khi import từ Minh Lộ.
+    khoa_hen = str(record.get("KHOA HẸN", "N/A") or "N/A").upper()
+
     return [
         import_time_str,                                        # A - Dấu thời gian
-        "Bệnh nhân điều trị nội khoa tái khám",                # B - NGUỒN BỆNH NHÂN
-        "Bệnh nhân chưa khám/bỏ khám",                         # C - TRẠNG THÁI (mặc định dropdown)
+        "BỆNH NHÂN ĐIỀU TRỊ NỘI KHOA TÁI KHÁM",                # B - NGUỒN BỆNH NHÂN (IN HOA)
+        "BỆNH NHÂN CHƯA KHÁM/BỎ KHÁM",                         # C - TRẠNG THÁI (IN HOA, mặc định dropdown)
         ngay_kham,                                              # D - NGÀY KHÁM (serial được convert trong push_to_sheet)
         record.get("HỌ TÊN", "N/A"),                           # E - HỌ VÀ TÊN BỆNH NHÂN
         record.get("NĂM SINH (ước tính)") or "N/A",            # F - NĂM SINH (đã sửa: trước đây bị hard-code "N/A")
         record.get("SỐ ĐIỆN THOẠI", "N/A"),                    # G - SỐ ĐIÊN THOẠI
         record.get("ĐỊA CHỈ", "N/A"),                          # H - ĐỊA CHỈ (THÔN/XÃ)
-        record.get("KHOA HẸN", "N/A"),                         # I - KHOA KHÁM CHỮA BỆNH
+        khoa_hen,                                               # I - KHOA KHÁM CHỮA BỆNH (IN HOA)
         record.get("GIỚI TÍNH") or "N/A",                      # J - GIỚI TÍNH (đã sửa: trước đây bị hard-code "N/A")
         "N/A",                                                  # K - TRIỆU CHỨNG CHÍNH
         "N/A",                                                  # L - SỐ CĂN CƯỚC
@@ -2799,7 +2803,7 @@ if st.session_state.metrics:
           Họ tên → HỌ VÀ TÊN &nbsp;|&nbsp; Địa chỉ → ĐỊA CHỈ &nbsp;|&nbsp;
           Ngày hẹn → NGÀY KHÁM &nbsp;|&nbsp; Điện thoại → SỐ ĐIÊN THOẠI &nbsp;|&nbsp;
           Khoa hẹn → KHOA KHÁM CHỮA BỆNH &nbsp;|&nbsp;
-          Nguồn BN → "Bệnh nhân điều trị nội khoa tái khám" &nbsp;|&nbsp;
+          Nguồn BN → "BỆNH NHÂN ĐIỀU TRỊ NỘI KHOA TÁI KHÁM" &nbsp;|&nbsp;
           Thời gian đăng ký → Thời điểm import &nbsp;|&nbsp;
           Cam kết & Đồng ý → "CÓ"
         </div>
