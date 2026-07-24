@@ -27,7 +27,8 @@ COL_PHONE       = "5. SỐ ĐIÊN THOẠI"
 COL_BIRTH_YEAR  = "NĂM SINH"
 COL_EXAM_TIME   = "GIỜ KHÁM DỰ KIẾN"
 COL_KHOA        = "KHOA KHÁM CHỮA BỆNH"
-STATUS_ATTENDED = "BỆNH NHÂN ĐÃ KHÁM"
+STATUS_ATTENDED     = "BỆNH NHÂN ĐÃ KHÁM"
+STATUS_NOT_ATTENDED = "BỆNH NHÂN CHƯA KHÁM / BỎ KHÁM"
 SCOPES = [
     "https://www.googleapis.com/auth/spreadsheets",
     "https://www.googleapis.com/auth/drive",
@@ -389,6 +390,85 @@ div[data-testid="stDownloadButton"] button {
 }
 .dlg-group-hd b { font-size:0.82rem; color:#1e293b; }
 .dlg-group-hd span { font-size:0.72rem; color:#64748b; }
+
+/* ── QUẢN LÝ: SỬA / XÓA BỆNH NHÂN (tab "3 Ngày Tới") ── */
+.mrow-section-hd {
+    display:flex; align-items:center; gap:0.4rem;
+    margin:0.9rem 0 0.55rem;
+    font-size:0.76rem; font-weight:700; color:#1e293b;
+    background:#f8fafc; border:1px solid #e2e8f0; border-radius:10px;
+    padding:0.55rem 0.9rem;
+}
+div[class*="_mrow_"] {
+    background:white; border:1px solid #e2e8f0; border-radius:12px;
+    padding:0.55rem 0.7rem; margin-bottom:0.5rem;
+    box-shadow:0 1px 3px rgba(0,0,0,0.05);
+    transition:box-shadow 0.15s;
+}
+div[class*="_mrow_"]:hover { box-shadow:0 3px 10px rgba(0,0,0,0.08); }
+div[class*="_mrow_"] div[data-testid="stHorizontalBlock"] { align-items:center; gap:0.4rem; }
+.mrow-info { display:flex; flex-wrap:wrap; align-items:center; gap:0.4rem 0.55rem; }
+.mrow-name { font-size:0.83rem; font-weight:700; color:#0f172a; }
+.mrow-sub  { font-size:0.68rem; color:#64748b; font-family:'JetBrains Mono',monospace !important; }
+.mrow-badge {
+    display:inline-block; font-size:0.64rem; font-weight:700;
+    padding:0.18rem 0.55rem; border-radius:20px; white-space:nowrap;
+}
+.mrow-badge-att { background:#d1fae5; color:#065f46; }
+.mrow-badge-nos { background:#fee2e2; color:#991b1b; }
+
+/* Nút "✏️ Sửa" — xanh dương */
+div[class*="editbtn_"] .stButton>button {
+    background:linear-gradient(135deg,#3b82f6,#2563eb) !important;
+    color:white !important; border:none !important;
+    border-radius:9px !important; font-weight:700 !important;
+    font-size:0.72rem !important; padding:0.42rem 0.3rem !important;
+    box-shadow:0 2px 8px rgba(37,99,235,0.28) !important;
+    transform:none !important;
+}
+div[class*="editbtn_"] .stButton>button:hover { filter:brightness(1.08); transform:none !important; }
+
+/* Nút "🗑️ Xóa" — đỏ */
+div[class*="delbtn_"] .stButton>button {
+    background:linear-gradient(135deg,#f43f5e,#dc2626) !important;
+    color:white !important; border:none !important;
+    border-radius:9px !important; font-weight:700 !important;
+    font-size:0.72rem !important; padding:0.42rem 0.3rem !important;
+    box-shadow:0 2px 8px rgba(220,38,38,0.28) !important;
+    transform:none !important;
+}
+div[class*="delbtn_"] .stButton>button:hover { filter:brightness(1.08); transform:none !important; }
+
+/* Popup "Sửa Trạng Thái Bệnh Nhân" */
+.edit-dlg-name {
+    font-size:0.92rem; font-weight:700; color:#0f172a;
+    background:#eff6ff; border:1px solid #bfdbfe; border-radius:10px;
+    padding:0.65rem 0.9rem; margin-bottom:0.9rem; text-align:center;
+}
+div[data-testid="stDialog"] div[role="radiogroup"] {
+    display:flex; flex-direction:column; gap:0.55rem;
+}
+div[data-testid="stDialog"] div[role="radiogroup"] label {
+    background:#f8fafc; border:1.5px solid #e2e8f0 !important; border-radius:11px !important;
+    padding:0.75rem 0.9rem !important; width:100%;
+    font-size:0.82rem !important; font-weight:600 !important; color:#1e293b !important;
+    transition:all 0.15s;
+}
+div[data-testid="stDialog"] div[role="radiogroup"] label:hover {
+    background:#eff6ff; border-color:#93c5fd !important;
+}
+div[data-testid="stDialog"] div[role="radiogroup"] label[data-checked="true"] {
+    background:#dbeafe !important; border-color:#3b82f6 !important;
+}
+
+/* Popup xác nhận xóa */
+.del-dlg-warn {
+    text-align:center; font-size:0.86rem; color:#334155; line-height:1.75;
+    background:#fef2f2; border:1px solid #fecaca; border-radius:11px;
+    padding:0.95rem 1rem; margin-bottom:0.9rem;
+}
+.del-dlg-warn b { color:#991b1b; }
+.del-dlg-note { display:block; font-size:0.7rem; color:#dc2626; font-weight:700; margin-top:0.35rem; }
 
 /* ── SOURCE STATS CARDS ── */
 .src-grid {
@@ -1146,6 +1226,44 @@ def push_to_sheet(creds_data, sheet_id, sheet_name, records):
         return 0, f"Lỗi ghi Sheet: {type(e).__name__}: {e}"
 
 
+def update_patient_status(creds_data, sheet_id, sheet_name, sheet_row, new_status):
+    """
+    Cập nhật cột TRẠNG THÁI cho 1 bệnh nhân, xác định theo SỐ DÒNG THỰC TẾ
+    trên Google Sheet (sheet_row, tính cả dòng tiêu đề — dòng dữ liệu đầu
+    tiên là dòng 2). Chỉ ghi đúng 1 ô, không đụng tới các cột khác.
+    Trả về (thành_công: bool, lỗi: str | None).
+    """
+    try:
+        cl = authenticate_rw(creds_data)
+        ss = cl.open_by_key(sheet_id)
+        ws = ss.worksheet(sheet_name)
+
+        headers = ws.row_values(1)
+        if COL_STATUS not in headers:
+            return False, f"Không tìm thấy cột '{COL_STATUS}' trên Google Sheet."
+        col_idx = headers.index(COL_STATUS) + 1  # gspread dùng chỉ số 1-based
+
+        ws.update_cell(sheet_row, col_idx, new_status)
+        return True, None
+    except Exception as e:
+        return False, f"Lỗi cập nhật trạng thái: {type(e).__name__}: {e}"
+
+
+def delete_patient_row(creds_data, sheet_id, sheet_name, sheet_row):
+    """
+    Xóa hẳn 1 dòng bệnh nhân khỏi Google Sheet, xác định theo SỐ DÒNG
+    THỰC TẾ (sheet_row). Trả về (thành_công: bool, lỗi: str | None).
+    """
+    try:
+        cl = authenticate_rw(creds_data)
+        ss = cl.open_by_key(sheet_id)
+        ws = ss.worksheet(sheet_name)
+        ws.delete_rows(sheet_row)
+        return True, None
+    except Exception as e:
+        return False, f"Lỗi xóa bệnh nhân: {type(e).__name__}: {e}"
+
+
 def fetch_raw(client):
     ws = client.open_by_key(SHEET_ID).worksheet(SHEET_NAME)
     vals = ws.get_all_values()
@@ -1589,6 +1707,75 @@ def render_upcoming_table(sub_df, empty_msg, dl_prefix, dl_key, page_state_key=N
                         st.session_state[state_key] = cur + 1
                         _smart_rerun()
 
+    # ── QUẢN LÝ: nút "✏️ Sửa" / "🗑️ Xóa" cho từng bệnh nhân (đúng trang đang xem) ──
+    HAS_DIALOG = hasattr(st, "dialog")
+    st.markdown(
+        '<div class="mrow-section-hd">⚙️ Quản Lý — Sửa Trạng Thái / Xóa Bệnh Nhân</div>',
+        unsafe_allow_html=True
+    )
+    for m_idx, m_row in page_df.iterrows():
+        # m_idx là index gốc từ Google Sheet (0-based, dòng dữ liệu đầu = index 0
+        # = dòng 2 trên Sheet, vì dòng 1 là tiêu đề) → dòng thực tế = m_idx + 2.
+        sheet_row = int(m_idx) + 2
+        m_name  = str(m_row.get(COL_NAME, "") or "—")
+        m_etime = str(m_row.get(COL_EXAM_TIME, "") or "—")
+        if len(m_etime) >= 5 and ":" in m_etime:
+            m_etime = m_etime[:5]
+        m_status = str(m_row.get(COL_STATUS, "") or "—")
+        m_is_att = STATUS_ATTENDED.upper() in m_status.upper()
+        m_badge_cls = "mrow-badge-att" if m_is_att else "mrow-badge-nos"
+
+        with st.container(key=f"mrow_{dl_key}_{sheet_row}"):
+            mc1, mc2, mc3 = st.columns([5, 1.3, 1.3])
+            with mc1:
+                st.markdown(
+                    '<div class="mrow-info">'
+                    f'<span class="mrow-name">👤 {m_name}</span>'
+                    f'<span class="mrow-sub">🕒 {m_etime}</span>'
+                    f'<span class="mrow-badge {m_badge_cls}">{m_status}</span>'
+                    '</div>',
+                    unsafe_allow_html=True
+                )
+            with mc2:
+                with st.container(key=f"editbtn_{dl_key}_{sheet_row}"):
+                    if st.button("✏️ Sửa", key=f"btn_edit_{dl_key}_{sheet_row}", use_container_width=True):
+                        if HAS_DIALOG:
+                            # KHÔNG gọi dialog ngay tại đây vì hàng này đang nằm
+                            # BÊN TRONG popup "Chi Tiết Lịch Khám Theo Ngày" — mở
+                            # thêm 1 popup nữa lồng vào popup đang mở dễ gây lỗi/
+                            # hiển thị sai ở Streamlit. Thay vào đó: đóng popup
+                            # hiện tại (rerun) và ghi nhớ ý định qua session_state,
+                            # popup "Sửa Trạng Thái" sẽ được mở lại ở tầng ngoài
+                            # cùng (top-level) ngay sau khi rerun xong.
+                            st.session_state.pending_action = {
+                                "type": "edit", "sheet_row": sheet_row,
+                                "name": m_name, "status": m_status,
+                            }
+                            st.rerun()
+                        else:
+                            st.session_state[f"inline_edit_open_{sheet_row}"] = True
+                            st.session_state[f"inline_del_open_{sheet_row}"] = False
+                            st.rerun()
+            with mc3:
+                with st.container(key=f"delbtn_{dl_key}_{sheet_row}"):
+                    if st.button("🗑️ Xóa", key=f"btn_del_{dl_key}_{sheet_row}", use_container_width=True):
+                        if HAS_DIALOG:
+                            st.session_state.pending_action = {
+                                "type": "delete", "sheet_row": sheet_row, "name": m_name,
+                            }
+                            st.rerun()
+                        else:
+                            st.session_state[f"inline_del_open_{sheet_row}"] = True
+                            st.session_state[f"inline_edit_open_{sheet_row}"] = False
+                            st.rerun()
+
+        # Streamlit cũ không có st.dialog → hiện form Sửa/Xóa ngay dưới hàng
+        if not HAS_DIALOG:
+            if st.session_state.get(f"inline_edit_open_{sheet_row}"):
+                render_inline_edit_form(sheet_row, m_name, m_status)
+            if st.session_state.get(f"inline_del_open_{sheet_row}"):
+                render_inline_delete_form(sheet_row, m_name)
+
     dl_cols = [c for c in [COL_NAME, COL_BIRTH_YEAR, COL_PHONE, COL_EXAM_DATE, COL_EXAM_TIME,
                            COL_SPECIALTY, COL_KHOA, COL_DOCTOR, COL_SOURCE, COL_STATUS]
                if c in sub_df.columns]
@@ -1600,6 +1787,131 @@ def render_upcoming_table(sub_df, empty_msg, dl_prefix, dl_key, page_state_key=N
         mime="text/csv",
         key=dl_key,
     )
+
+def _do_save_status(sheet_row, new_status, close_keys=()):
+    """Ghi trạng thái mới lên Google Sheet, làm mới cache, rồi rerun."""
+    if not creds_data:
+        st.error("❌ Chưa có thông tin xác thực (credentials). Kiểm tra Streamlit Secrets.")
+        return
+    with st.spinner("Đang cập nhật trạng thái…"):
+        ok, err = update_patient_status(creds_data, SHEET_ID, SHEET_NAME, sheet_row, new_status)
+    if ok:
+        st.session_state.metrics = None  # buộc tải lại dữ liệu mới nhất từ Sheet
+        st.session_state.pending_action = None
+        for k in close_keys:
+            st.session_state[k] = False
+        st.success("✅ Đã cập nhật trạng thái bệnh nhân!")
+        st.rerun()
+    else:
+        st.error(f"❌ {err}")
+
+
+def _do_delete_patient(sheet_row, close_keys=()):
+    """Xóa bệnh nhân khỏi Google Sheet, làm mới cache, rồi rerun."""
+    if not creds_data:
+        st.error("❌ Chưa có thông tin xác thực (credentials). Kiểm tra Streamlit Secrets.")
+        return
+    with st.spinner("Đang xóa bệnh nhân…"):
+        ok, err = delete_patient_row(creds_data, SHEET_ID, SHEET_NAME, sheet_row)
+    if ok:
+        st.session_state.metrics = None
+        st.session_state.pending_action = None
+        for k in close_keys:
+            st.session_state[k] = False
+        st.success("✅ Đã xóa bệnh nhân khỏi danh sách!")
+        st.rerun()
+    else:
+        st.error(f"❌ {err}")
+
+
+def open_edit_status_dialog(sheet_row, patient_name, current_status):
+    """Mở popup 'Sửa Trạng Thái Bệnh Nhân' (nằm trên popup ngày, dạng popup lồng)."""
+    @st.dialog("✏️ Sửa Trạng Thái Bệnh Nhân", width="small")
+    def _dlg():
+        st.markdown(
+            f'<div class="edit-dlg-name">👤 {patient_name}</div>',
+            unsafe_allow_html=True
+        )
+        options = [STATUS_NOT_ATTENDED, STATUS_ATTENDED]
+        default_idx = 1 if STATUS_ATTENDED.upper() in (current_status or "").upper() else 0
+        new_status = st.radio(
+            "Trạng thái khám",
+            options=options,
+            index=default_idx,
+            key=f"edit_status_radio_{sheet_row}",
+            label_visibility="collapsed",
+        )
+        st.markdown("<div style='height:0.3rem'></div>", unsafe_allow_html=True)
+        bc1, bc2 = st.columns(2)
+        with bc1:
+            if st.button("❌ Hủy", key=f"edit_cancel_{sheet_row}", use_container_width=True):
+                st.session_state.pending_action = None
+                st.rerun()
+        with bc2:
+            if st.button("💾 Lưu Thay Đổi", key=f"edit_save_{sheet_row}",
+                         use_container_width=True, type="primary"):
+                _do_save_status(sheet_row, new_status)
+    _dlg()
+
+
+def open_delete_dialog(sheet_row, patient_name):
+    """Mở popup xác nhận xóa bệnh nhân khỏi Google Sheet."""
+    @st.dialog("🗑️ Xóa Bệnh Nhân", width="small")
+    def _dlg():
+        st.markdown(
+            '<div class="del-dlg-warn">⚠️ Bạn có chắc chắn muốn xóa bệnh nhân<br>'
+            f'<b>{patient_name}</b> khỏi danh sách trên Google Sheet?'
+            '<span class="del-dlg-note">Hành động này không thể hoàn tác.</span></div>',
+            unsafe_allow_html=True
+        )
+        bc1, bc2 = st.columns(2)
+        with bc1:
+            if st.button("❌ Hủy", key=f"del_cancel_{sheet_row}", use_container_width=True):
+                st.session_state.pending_action = None
+                st.rerun()
+        with bc2:
+            if st.button("🗑️ Xác Nhận Xóa", key=f"del_confirm_{sheet_row}",
+                         use_container_width=True, type="primary"):
+                _do_delete_patient(sheet_row)
+    _dlg()
+
+
+def render_inline_edit_form(sheet_row, patient_name, current_status):
+    """
+    Fallback cho các phiên bản Streamlit CŨ không có st.dialog:
+    hiện form Sửa trạng thái ngay bên dưới hàng bệnh nhân thay vì popup.
+    """
+    with st.container(border=True):
+        st.markdown(f"**✏️ Sửa trạng thái — {patient_name}**")
+        options = [STATUS_NOT_ATTENDED, STATUS_ATTENDED]
+        default_idx = 1 if STATUS_ATTENDED.upper() in (current_status or "").upper() else 0
+        new_status = st.radio(
+            "Trạng thái khám", options=options, index=default_idx,
+            key=f"inline_edit_radio_{sheet_row}", label_visibility="collapsed",
+        )
+        ic1, ic2 = st.columns(2)
+        with ic1:
+            if st.button("💾 Lưu", key=f"inline_edit_save_{sheet_row}", use_container_width=True):
+                _do_save_status(sheet_row, new_status, close_keys=[f"inline_edit_open_{sheet_row}"])
+        with ic2:
+            if st.button("❌ Đóng", key=f"inline_edit_close_{sheet_row}", use_container_width=True):
+                st.session_state[f"inline_edit_open_{sheet_row}"] = False
+                st.rerun()
+
+
+def render_inline_delete_form(sheet_row, patient_name):
+    """Fallback cho Streamlit cũ: form xác nhận xóa hiện ngay dưới hàng bệnh nhân."""
+    with st.container(border=True):
+        st.warning(f"⚠️ Xác nhận xóa bệnh nhân **{patient_name}**? Hành động không thể hoàn tác.")
+        ic1, ic2 = st.columns(2)
+        with ic1:
+            if st.button("🗑️ Xác nhận xóa", key=f"inline_del_confirm_{sheet_row}", use_container_width=True):
+                _do_delete_patient(sheet_row, close_keys=[f"inline_del_open_{sheet_row}"])
+        with ic2:
+            if st.button("❌ Hủy", key=f"inline_del_close_{sheet_row}", use_container_width=True):
+                st.session_state[f"inline_del_open_{sheet_row}"] = False
+                st.rerun()
+
 
 def split_khoa_groups(day_df):
     """Trả về (kb_df, khac_df) đã phân loại theo cột KHOA KHÁM CHỮA BỆNH."""
@@ -1614,7 +1926,7 @@ def split_khoa_groups(day_df):
 # SESSION + FETCH
 # ═══════════════════════════════════════════════
 creds_data = get_credentials()
-for k,v in [("metrics",None),("fetch_time",None),("err",None)]:
+for k,v in [("metrics",None),("fetch_time",None),("err",None),("pending_action",None)]:
     if k not in st.session_state: st.session_state[k]=v
 
 def do_fetch():
@@ -1634,6 +1946,18 @@ def do_fetch():
 if st.session_state.metrics is None and st.session_state.err is None:
     with st.spinner("Đang tải dữ liệu…"):
         do_fetch()
+
+# ── Mở popup "Sửa Trạng Thái" / "Xóa Bệnh Nhân" (nếu có) ──
+# Luôn kiểm tra ở TẦNG NGOÀI CÙNG của script (không nằm trong bất kỳ
+# popup/dialog nào khác) để tránh lỗi mở dialog lồng trong dialog của
+# Streamlit. Cờ pending_action được đặt khi bấm nút Sửa/Xóa trong popup
+# "Chi Tiết Lịch Khám Theo Ngày" ở tab "3 Ngày Tới".
+if hasattr(st, "dialog") and st.session_state.get("pending_action"):
+    _pa = st.session_state.pending_action
+    if _pa.get("type") == "edit":
+        open_edit_status_dialog(_pa["sheet_row"], _pa["name"], _pa.get("status", ""))
+    elif _pa.get("type") == "delete":
+        open_delete_dialog(_pa["sheet_row"], _pa["name"])
 
 # ═══════════════════════════════════════════════
 # NAVBAR
