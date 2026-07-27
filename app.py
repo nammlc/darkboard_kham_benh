@@ -783,12 +783,18 @@ def _fix_phone(raw: str) -> str:
     return digits if digits else "N/A"
 
 
-def parse_minh_lo_excel(uploaded_file):
+def _load_xlsx_grid(uploaded_file):
     """
-    Parse Minh Lo HIS Excel export using direct XML parsing.
-    Robust against missing sharedStrings.xml (files with only numeric cells).
-    Handles merged cells via fill-down logic.
-    Returns (list_of_dicts, error_msg_or_None).
+    Đọc 1 file .xlsx bất kỳ (kể cả file Minh Lộ xuất zip lệch chuẩn) thành
+    lưới ô {(dòng, cột): giá_trị} bằng cách đọc trực tiếp XML bên trong zip —
+    không phụ thuộc sharedStrings.xml (một số file chỉ có ô số) và tự fill
+    giá trị cho các ô nằm trong vùng merge (gộp ô).
+
+    Dùng CHUNG cho mọi loại báo cáo Minh Lộ (hẹn khám, ĐK KCB, …) để không
+    lặp code — mỗi loại báo cáo chỉ khác nhau ở phần "hiểu cột nào là gì"
+    (do header khác nhau), còn phần đọc thô xlsx thì giống hệt nhau.
+
+    Trả về (grid, max_row, max_col, get_row_fn, error_msg_or_None).
     """
     import zipfile
     import xml.etree.ElementTree as ET
@@ -800,7 +806,6 @@ def parse_minh_lo_excel(uploaded_file):
         return "{" + NS + "}" + name
 
     try:
-        # Read file bytes (works for both Streamlit UploadedFile and file path)
         if hasattr(uploaded_file, "read"):
             raw = uploaded_file.read()
         else:
@@ -810,7 +815,6 @@ def parse_minh_lo_excel(uploaded_file):
         zf = zipfile.ZipFile(io.BytesIO(raw))
         # Một số phần mềm (vd. Minh Lộ HIS) nén zip với dấu '\' thay vì '/'
         # trong tên đường dẫn nội bộ (không đúng chuẩn zip nhưng vẫn mở được).
-        # Chuẩn hoá về '/' để so khớp đúng "worksheets/sheet1", "sharedstrings"...
         names_lower = {n.lower().replace("\\", "/"): n for n in zf.namelist()}
 
         # ── Shared strings (optional — some xlsx have none) ──
@@ -829,16 +833,15 @@ def parse_minh_lo_excel(uploaded_file):
             None,
         )
         if ws_key is None:
-            # fallback: find any sheet
             ws_key = next((k for k in names_lower if "worksheets/sheet" in k), None)
         if ws_key is None:
-            return [], "Không tìm thấy worksheet trong file xlsx."
+            return {}, 0, 0, None, "Không tìm thấy worksheet trong file xlsx."
 
         with zf.open(names_lower[ws_key]) as f:
             ws_tree = ET.parse(f)
 
         # ── Merged cells → build fill map {(row,col): (src_row,src_col)} ──
-        merge_fill = {}  # (r,c) → value to fill from top-left of merge
+        merge_fill = {}
         mc_el = ws_tree.find(".//" + _tag("mergeCells"))
         if mc_el is not None:
             for mc in mc_el.findall(_tag("mergeCell")):
@@ -862,7 +865,7 @@ def parse_minh_lo_excel(uploaded_file):
                             merge_fill[(r, c)] = (r1, c1)
 
         # ── Read all cells into grid ──
-        grid = {}  # (row, col) → raw value
+        grid = {}
         for row_el in ws_tree.findall(".//" + _tag("row")):
             r = int(row_el.get("r", 0))
             for cell_el in row_el.findall(_tag("c")):
@@ -885,7 +888,6 @@ def parse_minh_lo_excel(uploaded_file):
                     val = v_el.text or ""
                 grid[(r, col_n)] = val
 
-        # Apply merge fill
         for (r, c), (sr, sc) in merge_fill.items():
             if (sr, sc) in grid and (r, c) not in grid:
                 grid[(r, c)] = grid[(sr, sc)]
@@ -896,6 +898,36 @@ def parse_minh_lo_excel(uploaded_file):
         def get_row(r):
             return [grid.get((r, c), "") for c in range(1, max_col + 1)]
 
+        return grid, max_row, max_col, get_row, None
+
+    except Exception as e:
+        return {}, 0, 0, None, f"Lỗi đọc file: {type(e).__name__}: {e}"
+
+
+def _xlsx_serial_to_date_str(val):
+    """Chuyển số serial ngày của Excel/Google Sheets → chuỗi 'dd/mm/yyyy'.
+    Trả về None nếu không phải serial ngày hợp lệ."""
+    try:
+        s = float(val)
+        if 20000 < s < 60000:
+            return (datetime(1899, 12, 30) + timedelta(days=int(s))).strftime("%d/%m/%Y")
+    except Exception:
+        pass
+    return None
+
+
+def parse_minh_lo_excel(uploaded_file):
+    """
+    Parse Minh Lo HIS Excel export ("Danh sách bệnh nhân hẹn khám lại").
+    Robust against missing sharedStrings.xml (files with only numeric cells).
+    Handles merged cells via fill-down logic.
+    Returns (list_of_dicts, error_msg_or_None).
+    """
+    grid, max_row, max_col, get_row, err = _load_xlsx_grid(uploaded_file)
+    if err:
+        return [], err
+
+    try:
         # ── Find header row (row with STT and Mã y tế) ──
         header_row_idx = None
         for r in range(1, min(max_row + 1, 15)):
@@ -1094,6 +1126,115 @@ def parse_minh_lo_excel(uploaded_file):
         import traceback
         return [], f"Lỗi đọc file: {type(e).__name__}: {e}"
 
+
+def parse_minh_lo_visit_log(uploaded_file):
+    """
+    Parse báo cáo "ĐK Khám Chữa Bệnh" của Minh Lộ — đây là NHẬT KÝ BỆNH NHÂN
+    THỰC TẾ ĐÃ ĐẾN VIỆN (không phải danh sách hẹn), xuất theo 1 khoảng ngày
+    tuỳ chọn (vd. "Từ ngày 01/06/2026 đến ngày 30/06/2026"). Dùng file này
+    làm "dữ liệu thực tế" để đối chiếu xem bệnh nhân đã hẹn có thực sự đến
+    khám hay chưa — bất kể họ đến sớm/muộn hơn ngày hẹn bao nhiêu, vì file
+    trải dài cả khoảng thời gian nên không bị sót như so khớp theo 1 ngày.
+
+    Mỗi dòng = 1 lượt đến khám thực tế, gồm: Mã BN, Họ tên, Ngày sinh (đầy đủ,
+    CHÍNH XÁC — không phải ước tính từ tuổi), Giới tính, Địa chỉ, Số CMND,
+    Ngày ĐK (ngày thực đến khám), Khoa ĐK, Điện thoại, Mã thẻ BHYT.
+
+    Returns (list_of_dicts, error_msg_or_None).
+    """
+    grid, max_row, max_col, get_row, err = _load_xlsx_grid(uploaded_file)
+    if err:
+        return [], err
+
+    try:
+        # ── Tìm dòng tiêu đề: chứa cả "Mã BN" và "Ngày ĐK" ──
+        header_row_idx = None
+        for r in range(1, min(max_row + 1, 15)):
+            row_vals = [str(v).strip().lower() for v in get_row(r)]
+            has_ma_bn = any("mã bn" in v or "ma bn" in v for v in row_vals)
+            has_ngay_dk = any(v in ("ngày đk", "ngay dk") for v in row_vals)
+            if has_ma_bn and has_ngay_dk:
+                header_row_idx = r
+                break
+
+        if header_row_idx is None:
+            return [], ("Không tìm thấy hàng tiêu đề \"Mã BN\" / \"Ngày ĐK\". "
+                        "Kiểm tra đúng loại báo cáo \"ĐK Khám Chữa Bệnh\" của Minh Lộ.")
+
+        headers = [str(v).strip().replace("\n", " ").lower() for v in get_row(header_row_idx)]
+
+        def find_col(keywords):
+            for i, h in enumerate(headers):
+                if any(k.lower() in h for k in keywords):
+                    return i
+            return None
+
+        idx = {
+            "ma_bn":     find_col(["mã bn", "ma bn"]),
+            "ho_ten":    find_col(["họ tên", "ho ten"]),
+            "ngay_sinh": find_col(["ngày tháng năm sinh", "ngay thang nam sinh"]),
+            # "năm sinh" (chỉ năm) là chuỗi con của "ngày tháng năm sinh" (cả ngày
+            # tháng năm) → phải so khớp CHÍNH XÁC cả ô, không dùng "in" (substring),
+            # nếu không sẽ nhầm sang lấy đúng cột "ngày tháng năm sinh" ở trên.
+            "nam_sinh":  next((i for i, h in enumerate(headers) if h.strip() == "năm sinh"), None),
+            "tuoi":      find_col(["tuổi", "tuoi"]),
+            "gioi_tinh": find_col(["giới tính", "gioi tinh"]),
+            "xa":        find_col(["xã,phường", "xã", "phường", "xa,phuong"]),
+            "huyen":     find_col(["huyện,tỉnh", "huyện", "tỉnh", "huyen,tinh"]),
+            "cmnd":      find_col(["số cmnd", "so cmnd", "cmnd"]),
+            "ngay_dk":   find_col(["ngày đk", "ngay dk"]),
+            "gio_dk":    find_col(["giờ đk", "gio dk"]),
+            "khoa_dk":   find_col(["khoa đk", "khoa dk"]),
+            "dt":        find_col(["điện thoại", "dien thoai"]),
+            "dia_chi":   find_col(["địa chỉ", "dia chi"]),
+            "chan_doan": find_col(["chẩn đoán", "chan doan"]),
+            "bhyt":      find_col(["mã thẻ bhyt", "ma the bhyt", "bhyt"]),
+        }
+
+        def cv(row_vals, key):
+            i = idx.get(key)
+            if i is None or i >= len(row_vals):
+                return ""
+            return str(row_vals[i]).strip()
+
+        data_rows = []
+        for r in range(header_row_idx + 1, max_row + 1):
+            row_vals = get_row(r)
+            ho_ten = cv(row_vals, "ho_ten")
+            if not ho_ten or not re.search(r"[^\W\d_]", ho_ten, re.UNICODE):
+                continue  # bỏ dòng trống / dòng không phải dữ liệu bệnh nhân
+
+            ngay_sinh_raw = cv(row_vals, "ngay_sinh")
+            ngay_sinh = _xlsx_serial_to_date_str(ngay_sinh_raw) or ""
+            ngay_dk_raw = cv(row_vals, "ngay_dk")
+            ngay_dk = _xlsx_serial_to_date_str(ngay_dk_raw) or ""
+
+            dia_chi = cv(row_vals, "dia_chi") or " ".join(
+                p for p in [cv(row_vals, "xa"), cv(row_vals, "huyen")] if p
+            )
+
+            data_rows.append({
+                "MÃ BN":        cv(row_vals, "ma_bn"),
+                "HỌ TÊN":       ho_ten,
+                "NGÀY SINH":    ngay_sinh,
+                "NĂM SINH":     cv(row_vals, "nam_sinh"),
+                "TUỔI":         cv(row_vals, "tuoi"),
+                "GIỚI TÍNH":    cv(row_vals, "gioi_tinh"),
+                "ĐỊA CHỈ":      dia_chi,
+                "SỐ CMND":      cv(row_vals, "cmnd"),
+                "NGÀY ĐK":      ngay_dk,   # ngày THỰC ĐẾN KHÁM
+                "GIỜ ĐK":       cv(row_vals, "gio_dk"),
+                "KHOA ĐK":      cv(row_vals, "khoa_dk"),
+                "SỐ ĐIỆN THOẠI": _fix_phone(cv(row_vals, "dt")),
+                "CHẨN ĐOÁN":    cv(row_vals, "chan_doan"),
+                "SỐ BHYT":      cv(row_vals, "bhyt"),
+            })
+
+        return data_rows, None
+
+    except Exception as e:
+        return [], f"Lỗi đọc file: {type(e).__name__}: {e}"
+
 # Danh sách cột "mặc định" — chỉ dùng làm PHƯƠNG ÁN DỰ PHÒNG nếu vì lý do
 # nào đó không đọc được dòng tiêu đề thực tế trên Google Sheet (xem push_to_sheet).
 SHEET_COLUMNS = [
@@ -1270,6 +1411,180 @@ def delete_patient_row(creds_data, sheet_id, sheet_name, sheet_row):
         return True, None
     except Exception as e:
         return False, f"Lỗi xóa bệnh nhân: {type(e).__name__}: {e}"
+
+
+def update_patient_status_batch(creds_data, sheet_id, sheet_name, updates):
+    """
+    Cập nhật cột TRẠNG THÁI cho NHIỀU bệnh nhân cùng lúc bằng 1 lần gọi API
+    (batch_update) thay vì gọi update_cell lặp lại từng dòng — nhanh hơn và
+    tránh bị Google giới hạn số request khi đối chiếu hàng loạt.
+
+    updates: list các tuple (sheet_row, new_status).
+    Trả về (số dòng đã cập nhật, lỗi | None).
+    """
+    if not updates:
+        return 0, None
+    try:
+        cl = authenticate_rw(creds_data)
+        ss = cl.open_by_key(sheet_id)
+        ws = ss.worksheet(sheet_name)
+
+        headers = ws.row_values(1)
+        if COL_STATUS not in headers:
+            return 0, f"Không tìm thấy cột '{COL_STATUS}' trên Google Sheet."
+        col_letter = gspread.utils.rowcol_to_a1(1, headers.index(COL_STATUS) + 1)
+        col_letter = "".join(ch for ch in col_letter if ch.isalpha())
+
+        body = [
+            {"range": f"{col_letter}{sheet_row}", "values": [[new_status]]}
+            for sheet_row, new_status in updates
+        ]
+        ws.batch_update(body, value_input_option="USER_ENTERED")
+        return len(updates), None
+    except Exception as e:
+        return 0, f"Lỗi cập nhật hàng loạt: {type(e).__name__}: {e}"
+
+
+# ═══════════════════════════════════════════════════════════════
+# ĐỐI CHIẾU TÁI KHÁM — so khớp danh sách đã hẹn (Google Sheet) với
+# nhật ký bệnh nhân THỰC TẾ đến khám (file "Báo cáo ĐK KCB" Minh Lộ),
+# không phụ thuộc đúng 1 ngày (bệnh nhân có thể đến sớm/muộn hơn hẹn).
+# ═══════════════════════════════════════════════════════════════
+
+def _norm_name(s):
+    """Chuẩn hoá tên để so khớp: gộp khoảng trắng thừa, viết hoa toàn bộ."""
+    return re.sub(r"\s+", " ", str(s or "").strip()).upper()
+
+
+def _norm_phone_key(s):
+    digits = re.sub(r"\D", "", str(s or ""))
+    if len(digits) == 9:
+        digits = "0" + digits
+    return digits if len(digits) >= 9 else ""
+
+
+def _name_similarity(a, b):
+    """Độ giống nhau giữa 2 tên, 0.0 → 1.0 (dùng difflib, không cần thư viện ngoài)."""
+    import difflib
+    a, b = _norm_name(a), _norm_name(b)
+    if not a or not b:
+        return 0.0
+    return difflib.SequenceMatcher(None, a, b).ratio()
+
+
+def _parse_ddmmyyyy(s):
+    try:
+        return datetime.strptime(str(s).strip(), "%d/%m/%Y").date()
+    except Exception:
+        return None
+
+
+def reconcile_attendance(sheet_patients, visit_records, window_before=3, window_after=30):
+    """
+    Đối chiếu danh sách bệnh nhân ĐÃ HẸN (từ Google Sheet) với nhật ký bệnh
+    nhân THỰC TẾ đến khám (từ file "Báo cáo ĐK KCB" Minh Lộ, trải dài nhiều
+    ngày) để xác định ai đã đến khám — không bị sót vì đến sớm/muộn hơn hẹn.
+
+    THUẬT TOÁN — 2 bước:
+      Bước A (xác định ĐÚNG NGƯỜI): với mỗi bệnh nhân đã hẹn, tìm ứng viên
+      khớp nhất trong log thực tế bằng cách chấm điểm (không so tuyệt đối):
+        · Số điện thoại trùng khớp (đã chuẩn hoá)      → +35 điểm
+        · Độ giống tên (difflib ratio 0..1) × 55        → tối đa +55 điểm
+        · Năm sinh trùng khớp chính xác                 → +15 điểm
+        · Năm sinh lệch đúng 1 (do ước tính từ tuổi)     → +7 điểm
+      Ứng viên có điểm cao nhất được chọn. Ngưỡng phân loại:
+        ≥ 70 điểm  → khớp CHẮC CHẮN
+        45-69 điểm → khớp NGHI NGỜ (cần người dùng xác nhận tay)
+        < 45 điểm  → coi như KHÔNG TÌM THẤY (chưa đến khám)
+
+      Bước B (xác định ĐÚNG LÚC): với bệnh nhân đã khớp được người, so ngày
+      "NGÀY ĐK" (ngày thực đến) với "NGÀY KHÁM" (ngày hẹn) trên Sheet:
+        · lệch trong [-window_before, +window_after] ngày → ĐÚNG HẸN
+        · lệch ngoài khoảng đó                             → LỆCH NHIỀU (vẫn tính là đã đến, nhưng gắn cờ)
+        · không có NGÀY KHÁM để so (hiếm)                   → ĐÃ ĐẾN (không rõ đúng hẹn)
+
+    sheet_patients: list dict {"sheet_row", "name", "phone", "birth_year", "exam_date" (date|None)}
+    visit_records:  list dict từ parse_minh_lo_visit_log()
+
+    Trả về list dict, 1 phần tử / bệnh nhân đã hẹn, gồm:
+      sheet_row, name, exam_date, status:
+        "match_ok"      → đã đến, đúng khoảng cho phép
+        "match_offset"  → đã đến, nhưng lệch ngày nhiều
+        "match_unsure"  → nghi ngờ, cần xác nhận tay
+        "no_match"      → không tìm thấy, coi như chưa đến khám
+      + visit (bản ghi khớp được, hoặc None), score, day_diff (hoặc None)
+    """
+    # Chỉ mục theo SĐT để tăng tốc tra cứu (mỗi SĐT có thể ứng với nhiều lượt khám)
+    visit_by_phone = {}
+    for v in visit_records:
+        key = _norm_phone_key(v.get("SỐ ĐIỆN THOẠI"))
+        if key:
+            visit_by_phone.setdefault(key, []).append(v)
+
+    results = []
+    for p in sheet_patients:
+        p_name = p.get("name", "")
+        p_phone_key = _norm_phone_key(p.get("phone"))
+        p_birth = p.get("birth_year")
+        try:
+            p_birth = int(str(p_birth).strip()) if p_birth else None
+        except Exception:
+            p_birth = None
+
+        # Tập ứng viên: ưu tiên cùng SĐT (rất hiệu quả để thu hẹp phạm vi),
+        # nhưng vẫn xét TOÀN BỘ log nếu không có SĐT khớp — tránh bỏ sót
+        # trường hợp bệnh nhân đổi số điện thoại giữa 2 lần khám.
+        candidates = visit_by_phone.get(p_phone_key, []) if p_phone_key else []
+        if not candidates:
+            candidates = visit_records
+
+        best, best_score = None, 0.0
+        for v in candidates:
+            score = 0.0
+            if p_phone_key and _norm_phone_key(v.get("SỐ ĐIỆN THOẠI")) == p_phone_key:
+                score += 35
+            score += _name_similarity(p_name, v.get("HỌ TÊN")) * 55
+            try:
+                v_birth = int(str(v.get("NĂM SINH", "")).strip())
+            except Exception:
+                v_birth = None
+            if p_birth and v_birth:
+                if v_birth == p_birth:
+                    score += 15
+                elif abs(v_birth - p_birth) == 1:
+                    score += 7
+            if score > best_score:
+                best, best_score = v, score
+
+        entry = {
+            "sheet_row": p.get("sheet_row"), "name": p_name,
+            "exam_date": p.get("exam_date"), "visit": None,
+            "score": round(best_score, 1), "day_diff": None,
+        }
+
+        # Ngưỡng: ≥70 khớp chắc chắn (tên khớp gần tuyệt đối + (SĐT hoặc năm
+        # sinh) khớp) · 45-69 nghi ngờ, cần xác nhận tay · <45 coi như
+        # không tìm thấy. Đặt thấp hơn để KHÔNG bỏ sót các ca thiếu SĐT
+        # (rất phổ biến — nhiều bản ghi chỉ có "0" thay vì số thật).
+        if best is None or best_score < 45:
+            entry["status"] = "no_match"
+        else:
+            entry["visit"] = best
+            visit_date = _parse_ddmmyyyy(best.get("NGÀY ĐK"))
+            exam_date = p.get("exam_date")
+            if visit_date and exam_date:
+                diff = (visit_date - exam_date).days
+                entry["day_diff"] = diff
+                if -window_before <= diff <= window_after:
+                    entry["status"] = "match_ok" if best_score >= 70 else "match_unsure"
+                else:
+                    entry["status"] = "match_offset" if best_score >= 70 else "match_unsure"
+            else:
+                entry["status"] = "match_ok" if best_score >= 70 else "match_unsure"
+
+        results.append(entry)
+
+    return results
 
 
 def fetch_raw(client):
@@ -1962,7 +2277,7 @@ if st.session_state.metrics:
     """, unsafe_allow_html=True)
 
     # ── TABS ────────────────────────────────────
-    tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
+    tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
         "📊 Tổng Quan",
         "🔍 Tìm Theo Ngày",
         "📅 3 Ngày Tới",
@@ -1970,6 +2285,7 @@ if st.session_state.metrics:
         "📈 Báo Cáo",
         "👤 Bệnh Nhân",
         "📥 Import Từ Minh Lộ",
+        "✅ Đối Chiếu Tái Khám",
     ])
 
     # ════════════════
@@ -3004,6 +3320,200 @@ if st.session_state.metrics:
                                 st.balloons()
                                 # Invalidate cache so next refresh loads new data
                                 st.session_state.metrics = None
+
+    # ════════════════════════════════════
+    # TAB 8 — ĐỐI CHIẾU TÁI KHÁM
+    # ════════════════════════════════════
+    with tab8:
+        st.markdown(
+            '<div class="sh"><div class="sh-dot" style="background:#10b981"></div>'
+            '<span class="sh-txt">Đối Chiếu Bệnh Nhân Đã Hẹn Với Thực Tế Đến Khám</span></div>',
+            unsafe_allow_html=True
+        )
+        st.markdown("""
+        <div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:12px;
+                    padding:1rem 1.2rem;margin-bottom:1rem;font-size:0.83rem;color:#1e40af">
+          <b>📋 Hướng dẫn:</b><br>
+          1. Vào Minh Lộ → Báo cáo → <b>ĐK Khám Chữa Bệnh</b><br>
+          2. Chọn <b>khoảng ngày rộng</b> (vd. cả tháng, hoặc từ ngày hẹn sớm nhất tới nay) → Export Excel<br>
+          3. Upload file vào đây — hệ thống sẽ tự dò từng bệnh nhân <b>chưa khám</b> trên Sheet
+          xem có xuất hiện trong log này không, <b>không cần đúng 1 ngày</b> (đến sớm/muộn vẫn bắt được)
+        </div>
+        """, unsafe_allow_html=True)
+
+        visit_file = st.file_uploader(
+            "Upload file Excel \"Báo cáo ĐK KCB\" từ Minh Lộ (.xlsx)",
+            type=["xlsx"], key="visit_log_uploader",
+            help="File log bệnh nhân THỰC TẾ đến khám, xuất theo khoảng ngày rộng"
+        )
+
+        if visit_file is not None:
+            with st.spinner("Đang đọc file Excel…"):
+                visit_records, err_vl = parse_minh_lo_visit_log(visit_file)
+
+            if err_vl:
+                st.error(f"❌ {err_vl}")
+            elif not visit_records:
+                st.warning("⚠️ Không tìm thấy dữ liệu trong file. Kiểm tra đúng loại báo cáo \"ĐK KCB\".")
+            else:
+                vdates = [d for d in (_parse_ddmmyyyy(v["NGÀY ĐK"]) for v in visit_records) if d]
+                vmin = min(vdates).strftime("%d/%m/%Y") if vdates else "?"
+                vmax = max(vdates).strftime("%d/%m/%Y") if vdates else "?"
+                st.success(f"✅ Đọc được **{len(visit_records)}** lượt khám thực tế, từ **{vmin}** đến **{vmax}**")
+
+                st.markdown(
+                    '<div class="sh"><div class="sh-dot" style="background:#f59e0b"></div>'
+                    '<span class="sh-txt">⚙️ Tuỳ Chọn Đối Chiếu</span></div>',
+                    unsafe_allow_html=True
+                )
+                oc1, oc2, oc3 = st.columns(3)
+                with oc1:
+                    scope_opt = st.radio(
+                        "Phạm vi bệnh nhân cần kiểm tra",
+                        ["Chỉ bệnh nhân CHƯA KHÁM", "Toàn bộ bệnh nhân"],
+                        key="rec_scope",
+                    )
+                with oc2:
+                    window_before = st.number_input(
+                        "Chấp nhận đến SỚM hơn hẹn (ngày)", min_value=0, max_value=90,
+                        value=3, key="rec_wbefore"
+                    )
+                with oc3:
+                    window_after = st.number_input(
+                        "Chấp nhận đến MUỘN hơn hẹn (ngày)", min_value=0, max_value=180,
+                        value=30, key="rec_wafter"
+                    )
+
+                df_full_src = m.get("df_full", df)
+                if scope_opt == "Chỉ bệnh nhân CHƯA KHÁM":
+                    scope_df = df_full_src[
+                        ~df_full_src[COL_STATUS].astype(str).str.upper()
+                          .str.contains(STATUS_ATTENDED.upper(), na=False)
+                    ]
+                else:
+                    scope_df = df_full_src
+
+                sheet_patients = []
+                for idx2, row in scope_df.iterrows():
+                    exam_date = row["_date"].date() if pd.notna(row.get("_date")) else None
+                    sheet_patients.append({
+                        "sheet_row": int(idx2) + 2,
+                        "name": row.get(COL_NAME, ""),
+                        "phone": row.get(COL_PHONE, ""),
+                        "birth_year": row.get(COL_BIRTH_YEAR, ""),
+                        "exam_date": exam_date,
+                        "status_now": row.get(COL_STATUS, ""),
+                    })
+
+                st.caption(f"Sẽ kiểm tra **{len(sheet_patients)}** bệnh nhân trên Google Sheet.")
+
+                if st.button("🔍 Bắt Đầu Đối Chiếu", type="primary", use_container_width=True,
+                             disabled=(len(sheet_patients) == 0)):
+                    with st.spinner("Đang đối chiếu…"):
+                        results = reconcile_attendance(
+                            sheet_patients, visit_records,
+                            window_before=window_before, window_after=window_after
+                        )
+                    st.session_state["rec_results"] = results
+
+                results = st.session_state.get("rec_results")
+                if results:
+                    STATUS_LABEL = {
+                        "match_ok":     "✅ Đã đến đúng hẹn",
+                        "match_offset": "⚠️ Đã đến, lệch ngày nhiều",
+                        "match_unsure": "❓ Nghi ngờ, cần xác nhận",
+                        "no_match":     "❌ Chưa đến khám",
+                    }
+                    counts = Counter(r["status"] for r in results)
+
+                    st.markdown(f"""
+                    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:0.6rem;margin:0.9rem 0">
+                      <div class="kc kc-g" style="padding:0.8rem 1rem">
+                        <div class="kc-lbl">✅ Đúng Hẹn</div>
+                        <div class="kc-val" style="font-size:1.5rem">{counts.get('match_ok',0)}</div>
+                      </div>
+                      <div class="kc kc-t" style="padding:0.8rem 1rem">
+                        <div class="kc-lbl">⚠️ Lệch Ngày</div>
+                        <div class="kc-val" style="font-size:1.5rem;color:#b45309">{counts.get('match_offset',0)}</div>
+                      </div>
+                      <div class="kc kc-b" style="padding:0.8rem 1rem">
+                        <div class="kc-lbl">❓ Nghi Ngờ</div>
+                        <div class="kc-val" style="font-size:1.5rem;color:#1d4ed8">{counts.get('match_unsure',0)}</div>
+                      </div>
+                      <div class="kc kc-v" style="padding:0.8rem 1rem">
+                        <div class="kc-lbl">❌ Chưa Đến</div>
+                        <div class="kc-val" style="font-size:1.5rem">{counts.get('no_match',0)}</div>
+                      </div>
+                    </div>
+                    """, unsafe_allow_html=True)
+
+                    filter_opt = st.selectbox(
+                        "Lọc theo kết quả",
+                        ["Tất cả"] + list(STATUS_LABEL.values()),
+                        key="rec_filter"
+                    )
+                    label_to_key = {v: k for k, v in STATUS_LABEL.items()}
+                    shown = results if filter_opt == "Tất cả" else [
+                        r for r in results if r["status"] == label_to_key[filter_opt]
+                    ]
+
+                    table_rows = []
+                    for r in shown:
+                        v = r.get("visit")
+                        table_rows.append({
+                            "Họ tên": r["name"],
+                            "Ngày hẹn": r["exam_date"].strftime("%d/%m/%Y") if r["exam_date"] else "—",
+                            "Kết quả": STATUS_LABEL[r["status"]],
+                            "Ngày thực đến": v["NGÀY ĐK"] if v else "—",
+                            "Lệch (ngày)": r["day_diff"] if r["day_diff"] is not None else "—",
+                            "Độ tin cậy": f"{r['score']:.0f}%",
+                            "Khoa thực khám": v.get("KHOA ĐK", "") if v else "—",
+                        })
+                    st.dataframe(pd.DataFrame(table_rows), use_container_width=True,
+                                 hide_index=True, height=360)
+
+                    # ── Cập nhật hàng loạt trạng thái "ĐÃ KHÁM" cho các ca chắc chắn ──
+                    confirmable = [r for r in results if r["status"] in ("match_ok", "match_offset")]
+                    st.markdown(
+                        f'<div class="pg-info" style="text-align:left;margin:0.8rem 0">'
+                        f'Có <b>{len(confirmable)}</b> bệnh nhân khớp CHẮC CHẮN (không tính nhóm "nghi ngờ") '
+                        f'đang ở trạng thái khác "Đã khám" trên Sheet.</div>',
+                        unsafe_allow_html=True
+                    )
+                    to_update = [
+                        r["sheet_row"] for r in confirmable
+                        if STATUS_ATTENDED.upper() not in str(
+                            next((p["status_now"] for p in sheet_patients if p["sheet_row"] == r["sheet_row"]), "")
+                        ).upper()
+                    ]
+                    bc1, bc2 = st.columns([2, 1])
+                    with bc1:
+                        if st.button(f"✅ Cập Nhật \"Đã Khám\" Cho {len(to_update)} Bệnh Nhân",
+                                     type="primary", use_container_width=True,
+                                     disabled=(len(to_update) == 0)):
+                            if not creds_data:
+                                st.error("❌ Chưa có credentials. Kiểm tra Streamlit Secrets.")
+                            else:
+                                with st.spinner(f"Đang cập nhật {len(to_update)} dòng…"):
+                                    n_ok, err_batch = update_patient_status_batch(
+                                        creds_data, SHEET_ID, SHEET_NAME,
+                                        [(sr, STATUS_ATTENDED) for sr in to_update]
+                                    )
+                                if err_batch:
+                                    st.error(f"❌ {err_batch}")
+                                else:
+                                    st.success(f"✅ Đã cập nhật trạng thái cho {n_ok} bệnh nhân!")
+                                    st.session_state.metrics = None
+                                    st.session_state.pop("rec_results", None)
+                                    st.balloons()
+                    with bc2:
+                        csv_rec = pd.DataFrame(table_rows).to_csv(index=False, encoding="utf-8-sig")
+                        st.download_button(
+                            "⬇️ Tải Báo Cáo (.csv)", data=csv_rec.encode("utf-8-sig"),
+                            file_name=f"doi_chieu_taikham_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
+                            mime="text/csv", use_container_width=True,
+                        )
+
 
 else:
     if not st.session_state.err:
