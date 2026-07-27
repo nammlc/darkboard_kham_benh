@@ -1502,6 +1502,12 @@ def _parse_ddmmyyyy(s):
         return None
 
 
+def _parse_age(s):
+    """Lấy số tuổi từ chuỗi kiểu '68 tuổi', '68', 68 → 68 (int) hoặc None."""
+    m = re.search(r"\d+", str(s or ""))
+    return int(m.group()) if m else None
+
+
 RECONCILE_LOOKBACK_DAYS = 7   # danh sách gốc: bệnh nhân có NGÀY KHÁM trong X ngày gần đây
 RECONCILE_WINDOW_BEFORE = 2   # cửa sổ so khớp: chấp nhận đến SỚM hơn hẹn tối đa 2 ngày
 RECONCILE_WINDOW_AFTER  = 3   # và MUỘN hơn hẹn tối đa 3 ngày — nhưng KHÔNG BAO GIỜ vượt quá HÔM NAY
@@ -1532,33 +1538,35 @@ def reconcile_attendance(sheet_patients, visit_records,
       ngày 27/7 — trong khi thực ra họ CHƯA quay lại. Cửa sổ hẹp + chặn ở
       hôm nay giải quyết đúng vấn đề này.
 
-    THUẬT TOÁN so khớp ĐÚNG NGƯỜI — 3 tầng ưu tiên (chỉ xét trong số các lượt
-    khám thực tế đã lọc theo cửa sổ ngày ở trên):
-      1. CCCD/CMND khớp đúng (đã chuẩn hoá, tự khôi phục số 0 đầu bị Excel
-         làm mất) → khớp CHẮC CHẮN ngay lập tức
-      2. Số điện thoại khớp đúng (đã chuẩn hoá) → khớp CHẮC CHẮN ngay lập tức
-      3. Không có CCCD/SĐT khớp → chấm điểm dự phòng bằng tên + năm sinh:
-           · Độ giống tên (difflib ratio 0..1) × 55  → tối đa +55 điểm
-           · Năm sinh trùng khớp chính xác            → +15 điểm
-           · Năm sinh lệch đúng 1 (ước tính từ tuổi)   → +7 điểm
-         ≥ 70 điểm (tên khớp gần tuyệt đối + năm sinh khớp CHÍNH XÁC)
-           → vẫn coi là khớp CHẮC CHẮN (rất nhiều bệnh nhân — nhất là nhóm
-             tái khám tự động import — không có CCCD/SĐT đáng tin cậy để
-             so ở tầng 1-2, nên tầng 3 cần đủ mạnh để tự kết luận thay vì
-             luôn đẩy xuống "cần xác nhận tay")
-         45-69 điểm (tên gần khớp nhưng năm sinh lệch, hoặc thiếu 1 trong 2)
-           → khớp NGHI NGỜ, cần người dùng xác nhận tay trước khi ghi vào Sheet
+    THUẬT TOÁN so khớp ĐÚNG NGƯỜI — SỐ ĐIỆN THOẠI TRƯỚC, THIẾU MỚI XÉT
+    TÊN + TUỔI + NĂM SINH (chỉ xét trong số các lượt khám thực tế đã lọc
+    theo cửa sổ ngày ở trên):
+      1. Nếu bệnh nhân CÓ số điện thoại hợp lệ trên Sheet → CHỈ so khớp
+         bằng số điện thoại (đã chuẩn hoá). Khớp đúng → CHẮC CHẮN đã đến.
+         Không khớp được (dù có SĐT) → coi là CHƯA ĐẾN — không rơi xuống
+         so tên, vì SĐT là tín hiệu đáng tin nhất khi đã có sẵn.
+      2. Nếu bệnh nhân KHÔNG CÓ số điện thoại (trống/thiếu) → chuyển sang
+         chấm điểm dự phòng bằng TÊN + TUỔI + NĂM SINH:
+           · Độ giống tên (difflib ratio 0..1) × 55   → tối đa +55 điểm
+           · Năm sinh trùng khớp chính xác             → +15 điểm
+           · Năm sinh lệch đúng 1 (ước tính từ tuổi)    → +7 điểm
+           · Tuổi trùng khớp chính xác                  → +10 điểm
+           · Tuổi lệch đúng 1 (sai số theo thời gian)    → +5 điểm
+         ≥ 70 điểm → khớp CHẮC CHẮN (đủ mạnh để tự kết luận, không cần
+           xác nhận tay — vd tên khớp tuyệt đối + năm sinh khớp = 70đ)
+         45-69 điểm → khớp NGHI NGỜ, cần người dùng xác nhận tay
          < 45 điểm hoặc không có ứng viên nào trong cửa sổ → CHƯA ĐẾN KHÁM
 
-    sheet_patients: list dict {"sheet_row","name","phone","cccd","birth_year","exam_date","source"}
+    sheet_patients: list dict {"sheet_row","name","phone","birth_year","age","exam_date","source"}
     visit_records:  list dict từ parse_minh_lo_visit_log()
 
     Trả về list dict, 1 phần tử / bệnh nhân đã hẹn, gồm:
-      sheet_row, name, exam_date, source, score, visit (bản ghi khớp hoặc None), status:
-        "attended_sure"   → ĐÃ ĐẾN khám (khớp CCCD/SĐT chắc chắn, HOẶC tên+năm
-                             sinh khớp gần như tuyệt đối — điểm ≥70)
-        "attended_unsure" → CÓ THỂ đã đến (chỉ khớp tên+năm sinh ở mức vừa phải
-                             — điểm 45-69 — cần xác nhận tay)
+      sheet_row, name, phone, age, exam_date, source, score,
+      visit (bản ghi khớp hoặc None), status:
+        "attended_sure"   → ĐÃ ĐẾN khám (khớp SĐT chắc chắn, HOẶC tên+tuổi+
+                             năm sinh khớp gần như tuyệt đối — điểm ≥70)
+        "attended_unsure" → CÓ THỂ đã đến (chỉ khớp tên+tuổi+năm sinh ở mức
+                             vừa phải — điểm 45-69 — cần xác nhận tay)
         "not_attended"    → CHƯA ĐẾN khám (không tìm thấy trong cửa sổ)
     """
     today_d = today if today is not None else datetime.now().date()
@@ -1567,12 +1575,12 @@ def reconcile_attendance(sheet_patients, visit_records,
     for p in sheet_patients:
         p_name = p.get("name", "")
         p_phone_key = _norm_phone_key(p.get("phone"))
-        p_cccd = _norm_cccd(p.get("cccd"))
         p_birth = p.get("birth_year")
         try:
             p_birth = int(str(p_birth).strip()) if p_birth else None
         except Exception:
             p_birth = None
+        p_age = _parse_age(p.get("age"))
 
         exam_date = p.get("exam_date")
 
@@ -1592,33 +1600,28 @@ def reconcile_attendance(sheet_patients, visit_records,
 
         entry = {
             "sheet_row": p.get("sheet_row"), "name": p_name,
+            "phone": p.get("phone", ""), "age": p.get("age", ""),
             "exam_date": exam_date, "source": p.get("source", ""),
             "visit": None, "score": 0.0,
         }
 
-        # Tầng 1 — CCCD/CMND khớp đúng → chắc chắn, dừng luôn
-        matched_visit, matched_method = None, None
-        if p_cccd:
-            for v in candidates:
-                if _norm_cccd(v.get("SỐ CMND")) == p_cccd:
-                    matched_visit, matched_method = v, "CCCD"
-                    break
-
-        # Tầng 2 — Số điện thoại khớp đúng → chắc chắn
-        if matched_visit is None and p_phone_key:
+        # ── Tầng 1 — CÓ số điện thoại → chỉ so khớp bằng SĐT, không xét tên ──
+        if p_phone_key:
+            matched_visit = None
             for v in candidates:
                 if _norm_phone_key(v.get("SỐ ĐIỆN THOẠI")) == p_phone_key:
-                    matched_visit, matched_method = v, "SĐT"
+                    matched_visit = v
                     break
-
-        if matched_visit is not None:
-            entry["visit"] = matched_visit
-            entry["score"] = 100.0
-            entry["status"] = "attended_sure"
+            if matched_visit is not None:
+                entry["visit"] = matched_visit
+                entry["score"] = 100.0
+                entry["status"] = "attended_sure"
+            else:
+                entry["status"] = "not_attended"
             results.append(entry)
             continue
 
-        # Tầng 3 — Dự phòng: tên + năm sinh (chấm điểm, ngưỡng thấp hơn)
+        # ── Tầng 2 — KHÔNG có SĐT → chấm điểm dự phòng: tên + tuổi + năm sinh ──
         best, best_score = None, 0.0
         for v in candidates:
             score = _name_similarity(p_name, v.get("HỌ TÊN")) * 55
@@ -1631,6 +1634,12 @@ def reconcile_attendance(sheet_patients, visit_records,
                     score += 15
                 elif abs(v_birth - p_birth) == 1:
                     score += 7
+            v_age = _parse_age(v.get("TUỔI"))
+            if p_age is not None and v_age is not None:
+                if v_age == p_age:
+                    score += 10
+                elif abs(v_age - p_age) == 1:
+                    score += 5
             if score > best_score:
                 best, best_score = v, score
 
@@ -3468,6 +3477,7 @@ if st.session_state.metrics:
                         "phone": row.get(COL_PHONE, ""),
                         "cccd": row.get(COL_CCCD, ""),
                         "birth_year": row.get(COL_BIRTH_YEAR, ""),
+                        "age": row.get(COL_AGE, "") if COL_AGE in row.index else "",
                         "exam_date": exam_date,
                         "source": row.get(COL_SOURCE, ""),
                         "status_now": row.get(COL_STATUS, ""),
@@ -3540,10 +3550,14 @@ if st.session_state.metrics:
                         v = r.get("visit")
                         table_rows.append({
                             "Họ tên": r["name"],
+                            "SĐT": r.get("phone", "") or "—",
+                            "Tuổi": r.get("age", "") or "—",
                             "Nguồn bệnh nhân": r.get("source", "") or "—",
                             "Ngày hẹn": r["exam_date"].strftime("%d/%m/%Y") if r["exam_date"] else "—",
                             "Kết quả": STATUS_LABEL[r["status"]],
                             "Ngày thực đến": v["NGÀY ĐK"] if v else "—",
+                            "SĐT lúc khám": v.get("SỐ ĐIỆN THOẠI", "") if v else "—",
+                            "Tuổi lúc khám": v.get("TUỔI", "") if v else "—",
                             "Độ tin cậy": f"{r['score']:.0f}%",
                             "Khoa thực khám": v.get("KHOA ĐK", "") if v else "—",
                         })
