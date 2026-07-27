@@ -3370,10 +3370,10 @@ if st.session_state.metrics:
                 with oc1:
                     date_range = st.date_input(
                         "Khoảng NGÀY HẸN cần kiểm tra (trên Google Sheet)",
-                        value=(today, today + timedelta(days=7)),
+                        value=(today - timedelta(days=7), today),
                         key="rec_daterange",
-                        help="Mặc định 1 tuần kể từ hôm nay — chỉ bệnh nhân có Ngày khám "
-                             "rơi vào khoảng này mới được đưa vào đối chiếu."
+                        help="Mặc định 7 ngày gần nhất tính đến hôm nay — chỉ bệnh nhân có "
+                             "Ngày khám rơi vào khoảng này mới được đưa vào đối chiếu."
                     )
                 with oc2:
                     only_unattended = st.checkbox(
