@@ -28,6 +28,7 @@ COL_BIRTH_YEAR  = "NĂM SINH"
 COL_EXAM_TIME   = "GIỜ KHÁM DỰ KIẾN"
 COL_KHOA        = "KHOA KHÁM CHỮA BỆNH"
 COL_AGE         = "TUỔI"
+COL_CCCD        = "4. SỐ CĂN CƯỚC CÔNG DÂN - CHỨNG MINH THƯ"
 STATUS_ATTENDED     = "BỆNH NHÂN ĐÃ KHÁM"
 STATUS_NOT_ATTENDED = "BỆNH NHÂN CHƯA KHÁM / BỎ KHÁM"
 SCOPES = [
@@ -1460,7 +1461,14 @@ def _norm_phone_key(s):
     digits = re.sub(r"\D", "", str(s or ""))
     if len(digits) == 9:
         digits = "0" + digits
-    return digits if len(digits) >= 9 else ""
+    return digits if len(digits) >= 9 and set(digits) != {"0"} else ""
+
+
+def _norm_cccd(s):
+    """Chuẩn hoá số CCCD/CMND để so khớp: chỉ giữ chữ số, bỏ giá trị quá
+    ngắn (rác) — CCCD/CMND thật luôn có ít nhất 8-9 chữ số."""
+    d = re.sub(r"\D", "", str(s or ""))
+    return d if len(d) >= 8 else ""
 
 
 def _name_similarity(a, b):
@@ -1479,71 +1487,118 @@ def _parse_ddmmyyyy(s):
         return None
 
 
-def reconcile_attendance(sheet_patients, visit_records, window_before=3, window_after=30):
+RECONCILE_LOOKBACK_DAYS = 7   # danh sách gốc: bệnh nhân có NGÀY KHÁM trong X ngày gần đây
+RECONCILE_WINDOW_BEFORE = 2   # cửa sổ so khớp: chấp nhận đến SỚM hơn hẹn tối đa 2 ngày
+RECONCILE_WINDOW_AFTER  = 3   # và MUỘN hơn hẹn tối đa 3 ngày — nhưng KHÔNG BAO GIỜ vượt quá HÔM NAY
+                              # (xem hàm bên dưới) để không "vồ nhầm" hồ sơ của một đợt khám CŨ khác.
+
+def reconcile_attendance(sheet_patients, visit_records,
+                          window_before=RECONCILE_WINDOW_BEFORE,
+                          window_after=RECONCILE_WINDOW_AFTER,
+                          today=None):
     """
-    Đối chiếu danh sách bệnh nhân ĐÃ HẸN (từ Google Sheet) với nhật ký bệnh
-    nhân THỰC TẾ đến khám (từ file "Báo cáo ĐK KCB" Minh Lộ, trải dài nhiều
-    ngày) để xác định ai đã đến khám — không bị sót vì đến sớm/muộn hơn hẹn.
+    Đối chiếu danh sách bệnh nhân ĐÃ HẸN (từ Google Sheet, trong
+    RECONCILE_LOOKBACK_DAYS ngày gần nhất) với nhật ký bệnh nhân THỰC TẾ đến
+    khám (file "Báo cáo ĐK KCB" Minh Lộ) để xác định ai đã đến khám — không bị
+    sót vì đến sớm/muộn hơn hẹn.
 
-    THUẬT TOÁN — 2 bước:
-      Bước A (xác định ĐÚNG NGƯỜI): với mỗi bệnh nhân đã hẹn, tìm ứng viên
-      khớp nhất trong log thực tế bằng cách chấm điểm (không so tuyệt đối):
-        · Số điện thoại trùng khớp (đã chuẩn hoá)      → +35 điểm
-        · Độ giống tên (difflib ratio 0..1) × 55        → tối đa +55 điểm
-        · Năm sinh trùng khớp chính xác                 → +15 điểm
-        · Năm sinh lệch đúng 1 (do ước tính từ tuổi)     → +7 điểm
-      Ứng viên có điểm cao nhất được chọn. Ngưỡng phân loại:
-        ≥ 70 điểm  → khớp CHẮC CHẮN
-        45-69 điểm → khớp NGHI NGỜ (cần người dùng xác nhận tay)
-        < 45 điểm  → coi như KHÔNG TÌM THẤY (chưa đến khám)
+    CỬA SỔ NGÀY — CO GIÃN THEO TỪNG BỆNH NHÂN, LUÔN CHẶN Ở HÔM NAY:
+      Với 1 bệnh nhân có ngày hẹn D:
+        window_start = D − window_before
+        window_end   = min(D + window_after, HÔM NAY)
+      Ví dụ hôm nay là 27/7: bệnh nhân hẹn ngày 20/7 → cửa sổ [18/7, 23/7];
+      hẹn ngày 25/7 → cửa sổ [23/7, 27/7] (window_end bị chặn ở 27, không
+      phải 28). Việc chặn ở HÔM NAY (thay vì cộng cứng window_after) là điểm
+      mấu chốt để KHÔNG bị "vồ nhầm" hồ sơ của MỘT ĐỢT KHÁM CŨ khác của cùng
+      bệnh nhân — ví dụ: khám ngày 20/7, hẹn tái khám ngày 27/7 (tạo lịch
+      hẹn ngay trong đợt khám 20/7 đó). Nếu so theo cửa sổ rộng cố định
+      (vd ±14 ngày quanh 27/7), thuật toán sẽ thấy hồ sơ ngày 20/7 nằm
+      trong cửa sổ và tưởng nhầm đó là bằng chứng bệnh nhân đã tái khám
+      ngày 27/7 — trong khi thực ra họ CHƯA quay lại. Cửa sổ hẹp + chặn ở
+      hôm nay giải quyết đúng vấn đề này.
 
-      Bước B (xác định ĐÚNG LÚC): với bệnh nhân đã khớp được người, so ngày
-      "NGÀY ĐK" (ngày thực đến) với "NGÀY KHÁM" (ngày hẹn) trên Sheet:
-        · lệch trong [-window_before, +window_after] ngày → ĐÚNG HẸN
-        · lệch ngoài khoảng đó                             → LỆCH NHIỀU (vẫn tính là đã đến, nhưng gắn cờ)
-        · không có NGÀY KHÁM để so (hiếm)                   → ĐÃ ĐẾN (không rõ đúng hẹn)
+    THUẬT TOÁN so khớp ĐÚNG NGƯỜI — 3 tầng ưu tiên (chỉ xét trong số các lượt
+    khám thực tế đã lọc theo cửa sổ ngày ở trên):
+      1. CCCD/CMND khớp đúng (đã chuẩn hoá)     → khớp CHẮC CHẮN ngay lập tức
+      2. Số điện thoại khớp đúng (đã chuẩn hoá) → khớp CHẮC CHẮN ngay lập tức
+      3. Không có CCCD/SĐT khớp → chấm điểm dự phòng bằng tên + năm sinh:
+           · Độ giống tên (difflib ratio 0..1) × 55  → tối đa +55 điểm
+           · Năm sinh trùng khớp chính xác            → +15 điểm
+           · Năm sinh lệch đúng 1 (ước tính từ tuổi)   → +7 điểm
+         ≥ 45 điểm (tên gần khớp + năm sinh lệch ≤1)  → khớp NGHI NGỜ,
+           cần người dùng xác nhận tay trước khi ghi vào Sheet
+         < 45 điểm hoặc không có ứng viên nào trong cửa sổ → CHƯA ĐẾN KHÁM
 
-    sheet_patients: list dict {"sheet_row", "name", "phone", "birth_year", "exam_date" (date|None)}
+    sheet_patients: list dict {"sheet_row","name","phone","cccd","birth_year","exam_date","source"}
     visit_records:  list dict từ parse_minh_lo_visit_log()
 
     Trả về list dict, 1 phần tử / bệnh nhân đã hẹn, gồm:
-      sheet_row, name, exam_date, status:
-        "match_ok"      → đã đến, đúng khoảng cho phép
-        "match_offset"  → đã đến, nhưng lệch ngày nhiều
-        "match_unsure"  → nghi ngờ, cần xác nhận tay
-        "no_match"      → không tìm thấy, coi như chưa đến khám
-      + visit (bản ghi khớp được, hoặc None), score, day_diff (hoặc None)
+      sheet_row, name, exam_date, source, score, visit (bản ghi khớp hoặc None), status:
+        "attended_sure"   → ĐÃ ĐẾN khám (khớp CCCD hoặc SĐT — chắc chắn)
+        "attended_unsure" → CÓ THỂ đã đến (chỉ khớp tên+năm sinh — cần xác nhận tay)
+        "not_attended"    → CHƯA ĐẾN khám (không tìm thấy trong cửa sổ)
     """
-    # Chỉ mục theo SĐT để tăng tốc tra cứu (mỗi SĐT có thể ứng với nhiều lượt khám)
-    visit_by_phone = {}
-    for v in visit_records:
-        key = _norm_phone_key(v.get("SỐ ĐIỆN THOẠI"))
-        if key:
-            visit_by_phone.setdefault(key, []).append(v)
+    today_d = today if today is not None else datetime.now().date()
 
     results = []
     for p in sheet_patients:
         p_name = p.get("name", "")
         p_phone_key = _norm_phone_key(p.get("phone"))
+        p_cccd = _norm_cccd(p.get("cccd"))
         p_birth = p.get("birth_year")
         try:
             p_birth = int(str(p_birth).strip()) if p_birth else None
         except Exception:
             p_birth = None
 
-        # Tập ứng viên: ưu tiên cùng SĐT (rất hiệu quả để thu hẹp phạm vi),
-        # nhưng vẫn xét TOÀN BỘ log nếu không có SĐT khớp — tránh bỏ sót
-        # trường hợp bệnh nhân đổi số điện thoại giữa 2 lần khám.
-        candidates = visit_by_phone.get(p_phone_key, []) if p_phone_key else []
-        if not candidates:
-            candidates = visit_records
+        exam_date = p.get("exam_date")
 
+        # ── Lọc ứng viên theo cửa sổ ngày RIÊNG của bệnh nhân này ──
+        if exam_date:
+            w_start = exam_date - timedelta(days=window_before)
+            w_end = min(exam_date + timedelta(days=window_after), today_d)
+            candidates = []
+            for v in visit_records:
+                vd = _parse_ddmmyyyy(v.get("NGÀY ĐK"))
+                if vd is not None and w_start <= vd <= w_end:
+                    candidates.append(v)
+        else:
+            # Không xác định được ngày hẹn (hiếm) → không đủ an toàn để giới
+            # hạn cửa sổ, coi như không có ứng viên (tránh khớp bừa).
+            candidates = []
+
+        entry = {
+            "sheet_row": p.get("sheet_row"), "name": p_name,
+            "exam_date": exam_date, "source": p.get("source", ""),
+            "visit": None, "score": 0.0,
+        }
+
+        # Tầng 1 — CCCD/CMND khớp đúng → chắc chắn, dừng luôn
+        matched_visit, matched_method = None, None
+        if p_cccd:
+            for v in candidates:
+                if _norm_cccd(v.get("SỐ CMND")) == p_cccd:
+                    matched_visit, matched_method = v, "CCCD"
+                    break
+
+        # Tầng 2 — Số điện thoại khớp đúng → chắc chắn
+        if matched_visit is None and p_phone_key:
+            for v in candidates:
+                if _norm_phone_key(v.get("SỐ ĐIỆN THOẠI")) == p_phone_key:
+                    matched_visit, matched_method = v, "SĐT"
+                    break
+
+        if matched_visit is not None:
+            entry["visit"] = matched_visit
+            entry["score"] = 100.0
+            entry["status"] = "attended_sure"
+            results.append(entry)
+            continue
+
+        # Tầng 3 — Dự phòng: tên + năm sinh (chấm điểm, ngưỡng thấp hơn)
         best, best_score = None, 0.0
         for v in candidates:
-            score = 0.0
-            if p_phone_key and _norm_phone_key(v.get("SỐ ĐIỆN THOẠI")) == p_phone_key:
-                score += 35
-            score += _name_similarity(p_name, v.get("HỌ TÊN")) * 55
+            score = _name_similarity(p_name, v.get("HỌ TÊN")) * 55
             try:
                 v_birth = int(str(v.get("NĂM SINH", "")).strip())
             except Exception:
@@ -1556,31 +1611,12 @@ def reconcile_attendance(sheet_patients, visit_records, window_before=3, window_
             if score > best_score:
                 best, best_score = v, score
 
-        entry = {
-            "sheet_row": p.get("sheet_row"), "name": p_name,
-            "exam_date": p.get("exam_date"), "visit": None,
-            "score": round(best_score, 1), "day_diff": None,
-        }
-
-        # Ngưỡng: ≥70 khớp chắc chắn (tên khớp gần tuyệt đối + (SĐT hoặc năm
-        # sinh) khớp) · 45-69 nghi ngờ, cần xác nhận tay · <45 coi như
-        # không tìm thấy. Đặt thấp hơn để KHÔNG bỏ sót các ca thiếu SĐT
-        # (rất phổ biến — nhiều bản ghi chỉ có "0" thay vì số thật).
-        if best is None or best_score < 45:
-            entry["status"] = "no_match"
-        else:
+        entry["score"] = round(best_score, 1)
+        if best is not None and best_score >= 45:
             entry["visit"] = best
-            visit_date = _parse_ddmmyyyy(best.get("NGÀY ĐK"))
-            exam_date = p.get("exam_date")
-            if visit_date and exam_date:
-                diff = (visit_date - exam_date).days
-                entry["day_diff"] = diff
-                if -window_before <= diff <= window_after:
-                    entry["status"] = "match_ok" if best_score >= 70 else "match_unsure"
-                else:
-                    entry["status"] = "match_offset" if best_score >= 70 else "match_unsure"
-            else:
-                entry["status"] = "match_ok" if best_score >= 70 else "match_unsure"
+            entry["status"] = "attended_unsure"
+        else:
+            entry["status"] = "not_attended"
 
         results.append(entry)
 
@@ -3363,54 +3399,35 @@ if st.session_state.metrics:
 
                 st.markdown(
                     '<div class="sh"><div class="sh-dot" style="background:#f59e0b"></div>'
-                    '<span class="sh-txt">⚙️ Tuỳ Chọn Đối Chiếu</span></div>',
+                    '<span class="sh-txt">⚙️ Phạm Vi Đối Chiếu</span></div>',
                     unsafe_allow_html=True
                 )
-                oc1, oc2 = st.columns(2)
-                with oc1:
-                    date_range = st.date_input(
-                        "Khoảng NGÀY HẸN cần kiểm tra (trên Google Sheet)",
-                        value=(today - timedelta(days=7), today),
-                        key="rec_daterange",
-                        help="Mặc định 7 ngày gần nhất tính đến hôm nay — chỉ bệnh nhân có "
-                             "Ngày khám rơi vào khoảng này mới được đưa vào đối chiếu."
-                    )
-                with oc2:
-                    only_unattended = st.checkbox(
-                        "Chỉ kiểm tra bệnh nhân đang ở trạng thái CHƯA KHÁM",
-                        value=True, key="rec_only_unattended",
-                        help="Bỏ tích nếu muốn đối chiếu lại cả những ca đã đánh dấu Đã khám."
-                    )
 
-                oc3, oc4 = st.columns(2)
-                with oc3:
-                    window_before = st.number_input(
-                        "Chấp nhận đến SỚM hơn hẹn (ngày)", min_value=0, max_value=90,
-                        value=3, key="rec_wbefore"
-                    )
-                with oc4:
-                    window_after = st.number_input(
-                        "Chấp nhận đến MUỘN hơn hẹn (ngày)", min_value=0, max_value=180,
-                        value=30, key="rec_wafter"
-                    )
+                range_start = today - timedelta(days=RECONCILE_LOOKBACK_DAYS)
+                range_end = today
 
-                if isinstance(date_range, tuple) and len(date_range) == 2:
-                    range_start, range_end = date_range
-                else:
-                    # Người dùng mới chọn 1 đầu ngày, chưa chọn xong khoảng
-                    range_start, range_end = date_range, date_range
+                st.markdown(f"""
+                <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:12px;
+                            padding:0.9rem 1.1rem;margin-bottom:0.9rem;font-size:0.82rem;color:#334155">
+                  📅 Danh sách gốc: bệnh nhân có <b>NGÀY KHÁM</b> từ
+                  <b>{range_start.strftime('%d/%m/%Y')}</b> đến <b>{range_end.strftime('%d/%m/%Y')}</b>
+                  ({RECONCILE_LOOKBACK_DAYS} ngày gần nhất) và đang <b>CHƯA KHÁM</b> —
+                  bao gồm <b>cả 2 nguồn</b>: bệnh nhân từ khoa (tái khám) lẫn bệnh nhân vãng lai.<br>
+                  🔍 Với mỗi bệnh nhân, chỉ chấp nhận lượt đến khám thực tế nằm trong cửa sổ
+                  <b>[Ngày hẹn − {RECONCILE_WINDOW_BEFORE}, min(Ngày hẹn + {RECONCILE_WINDOW_AFTER}, Hôm nay)]</b>
+                  — cửa sổ tự thu hẹp khi ngày hẹn gần hôm nay, để không nhầm sang một đợt khám
+                  <i>khác</i> (vd. đợt khám cũ) của cùng bệnh nhân.
+                </div>
+                """, unsafe_allow_html=True)
 
                 df_full_src = m.get("df_full", df)
                 scope_df = df_full_src[
                     df_full_src["_date"].notna()
                     & (df_full_src["_date"].dt.date >= range_start)
                     & (df_full_src["_date"].dt.date <= range_end)
+                    & (~df_full_src[COL_STATUS].astype(str).str.upper()
+                         .str.contains(STATUS_ATTENDED.upper(), na=False))
                 ]
-                if only_unattended:
-                    scope_df = scope_df[
-                        ~scope_df[COL_STATUS].astype(str).str.upper()
-                          .str.contains(STATUS_ATTENDED.upper(), na=False)
-                    ]
 
                 sheet_patients = []
                 for idx2, row in scope_df.iterrows():
@@ -3419,61 +3436,61 @@ if st.session_state.metrics:
                         "sheet_row": int(idx2) + 2,
                         "name": row.get(COL_NAME, ""),
                         "phone": row.get(COL_PHONE, ""),
+                        "cccd": row.get(COL_CCCD, ""),
                         "birth_year": row.get(COL_BIRTH_YEAR, ""),
                         "exam_date": exam_date,
+                        "source": row.get(COL_SOURCE, ""),
                         "status_now": row.get(COL_STATUS, ""),
                     })
 
+                n_khoa = sum(1 for p in sheet_patients
+                             if "khoa" in str(p["source"]).lower() or "tái" in str(p["source"]).lower()
+                             or "tai" in str(p["source"]).lower())
+                n_vl = sum(1 for p in sheet_patients
+                           if "vãng lai" in str(p["source"]).lower() or "vang lai" in str(p["source"]).lower())
                 st.caption(
-                    f"📅 Từ **{range_start.strftime('%d/%m/%Y')}** đến "
-                    f"**{range_end.strftime('%d/%m/%Y')}** · "
-                    f"Sẽ kiểm tra **{len(sheet_patients)}** bệnh nhân trên Google Sheet."
+                    f"Sẽ kiểm tra **{len(sheet_patients)}** bệnh nhân chưa khám "
+                    f"(≈{n_khoa} từ khoa/tái khám · ≈{n_vl} vãng lai · còn lại nguồn khác)."
                 )
 
                 if st.button("🔍 Bắt Đầu Đối Chiếu", type="primary", use_container_width=True,
                              disabled=(len(sheet_patients) == 0)):
                     with st.spinner("Đang đối chiếu…"):
-                        results = reconcile_attendance(
-                            sheet_patients, visit_records,
-                            window_before=window_before, window_after=window_after
-                        )
+                        results = reconcile_attendance(sheet_patients, visit_records, today=today)
                     st.session_state["rec_results"] = results
+                    st.session_state["rec_sheet_patients"] = sheet_patients
 
                 results = st.session_state.get("rec_results")
                 if results:
                     STATUS_LABEL = {
-                        "match_ok":     "✅ Đã đến đúng hẹn",
-                        "match_offset": "⚠️ Đã đến, lệch ngày nhiều",
-                        "match_unsure": "❓ Nghi ngờ, cần xác nhận",
-                        "no_match":     "❌ Chưa đến khám",
+                        "attended_sure":   "✅ Đã đến khám",
+                        "attended_unsure": "❓ Có thể đã đến (cần xác nhận)",
+                        "not_attended":    "⏳ Chưa đến khám",
                     }
                     counts = Counter(r["status"] for r in results)
-                    da_den = counts.get("match_ok", 0) + counts.get("match_offset", 0)
-                    chua_den = counts.get("no_match", 0)
+                    da_den = counts.get("attended_sure", 0)
+                    chua_den = counts.get("not_attended", 0)
+                    nghi_ngo = counts.get("attended_unsure", 0)
                     st.success(
                         f"📊 **Kết quả đối chiếu {len(results)} bệnh nhân**: "
-                        f"**{da_den}** người đã đến khám · "
-                        f"**{chua_den}** người chưa đến khám · "
-                        f"**{counts.get('match_unsure',0)}** ca nghi ngờ cần bạn xác nhận tay."
+                        f"**{da_den}** đã đến khám (chắc chắn) · "
+                        f"**{chua_den}** chưa đến khám · "
+                        f"**{nghi_ngo}** ca cần xác nhận tay."
                     )
 
                     st.markdown(f"""
-                    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:0.6rem;margin:0.9rem 0">
+                    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:0.6rem;margin:0.9rem 0">
                       <div class="kc kc-g" style="padding:0.8rem 1rem">
-                        <div class="kc-lbl">✅ Đúng Hẹn</div>
-                        <div class="kc-val" style="font-size:1.5rem">{counts.get('match_ok',0)}</div>
-                      </div>
-                      <div class="kc kc-t" style="padding:0.8rem 1rem">
-                        <div class="kc-lbl">⚠️ Lệch Ngày</div>
-                        <div class="kc-val" style="font-size:1.5rem;color:#b45309">{counts.get('match_offset',0)}</div>
+                        <div class="kc-lbl">✅ Đã Đến Khám</div>
+                        <div class="kc-val" style="font-size:1.5rem">{da_den}</div>
                       </div>
                       <div class="kc kc-b" style="padding:0.8rem 1rem">
-                        <div class="kc-lbl">❓ Nghi Ngờ</div>
-                        <div class="kc-val" style="font-size:1.5rem;color:#1d4ed8">{counts.get('match_unsure',0)}</div>
+                        <div class="kc-lbl">❓ Cần Xác Nhận</div>
+                        <div class="kc-val" style="font-size:1.5rem;color:#1d4ed8">{nghi_ngo}</div>
                       </div>
                       <div class="kc kc-v" style="padding:0.8rem 1rem">
-                        <div class="kc-lbl">❌ Chưa Đến</div>
-                        <div class="kc-val" style="font-size:1.5rem">{counts.get('no_match',0)}</div>
+                        <div class="kc-lbl">⏳ Chưa Đến</div>
+                        <div class="kc-val" style="font-size:1.5rem">{chua_den}</div>
                       </div>
                     </div>
                     """, unsafe_allow_html=True)
@@ -3493,22 +3510,26 @@ if st.session_state.metrics:
                         v = r.get("visit")
                         table_rows.append({
                             "Họ tên": r["name"],
+                            "Nguồn bệnh nhân": r.get("source", "") or "—",
                             "Ngày hẹn": r["exam_date"].strftime("%d/%m/%Y") if r["exam_date"] else "—",
                             "Kết quả": STATUS_LABEL[r["status"]],
                             "Ngày thực đến": v["NGÀY ĐK"] if v else "—",
-                            "Lệch (ngày)": r["day_diff"] if r["day_diff"] is not None else "—",
                             "Độ tin cậy": f"{r['score']:.0f}%",
                             "Khoa thực khám": v.get("KHOA ĐK", "") if v else "—",
                         })
                     st.dataframe(pd.DataFrame(table_rows), use_container_width=True,
                                  hide_index=True, height=360)
 
-                    # ── Cập nhật hàng loạt trạng thái "ĐÃ KHÁM" cho các ca chắc chắn ──
-                    confirmable = [r for r in results if r["status"] in ("match_ok", "match_offset")]
+                    # ── Cập nhật hàng loạt trạng thái "ĐÃ KHÁM" — CHỈ cho các ca
+                    # khớp CHẮC CHẮN (CCCD/SĐT). Ca "cần xác nhận" (chỉ khớp tên
+                    # + năm sinh) KHÔNG tự động ghi vào Sheet — phải xác nhận tay
+                    # (vd. qua nút "Sửa" ở tab "3 Ngày Tới") để tránh gán nhầm người.
+                    confirmable = [r for r in results if r["status"] == "attended_sure"]
                     st.markdown(
                         f'<div class="pg-info" style="text-align:left;margin:0.8rem 0">'
-                        f'Có <b>{len(confirmable)}</b> bệnh nhân khớp CHẮC CHẮN (không tính nhóm "nghi ngờ") '
-                        f'đang ở trạng thái khác "Đã khám" trên Sheet.</div>',
+                        f'Có <b>{len(confirmable)}</b> bệnh nhân khớp CHẮC CHẮN (CCCD hoặc SĐT) '
+                        f'đang ở trạng thái khác "Đã khám" trên Sheet. Nhóm "cần xác nhận" '
+                        f'({nghi_ngo} ca) không được tự động cập nhật.</div>',
                         unsafe_allow_html=True
                     )
                     to_update = [
@@ -3536,6 +3557,7 @@ if st.session_state.metrics:
                                     st.success(f"✅ Đã cập nhật trạng thái cho {n_ok} bệnh nhân!")
                                     st.session_state.metrics = None
                                     st.session_state.pop("rec_results", None)
+                                    st.session_state.pop("rec_sheet_patients", None)
                                     st.balloons()
                     with bc2:
                         csv_rec = pd.DataFrame(table_rows).to_csv(index=False, encoding="utf-8-sig")
