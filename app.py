@@ -1465,9 +1465,24 @@ def _norm_phone_key(s):
 
 
 def _norm_cccd(s):
-    """Chuẩn hoá số CCCD/CMND để so khớp: chỉ giữ chữ số, bỏ giá trị quá
-    ngắn (rác) — CCCD/CMND thật luôn có ít nhất 8-9 chữ số."""
+    """Chuẩn hoá số CCCD/CMND để so khớp: chỉ giữ chữ số.
+
+    QUAN TRỌNG: CCCD (căn cước công dân) chuẩn có ĐÚNG 12 chữ số, và rất
+    nhiều mã tỉnh bắt đầu bằng số 0 (vd. 001-096). Khi Excel/Google Sheets
+    lưu ô này dưới dạng SỐ (number) thay vì văn bản (text) — điều này xảy
+    ra rất phổ biến khi xuất báo cáo từ Minh Lộ — số 0 đầu tiên bị MẤT,
+    biến 12 số thành 11 số (y hệt lỗi mất số 0 đầu ở số điện thoại đã xử lý
+    ở _norm_phone_key). Trên dữ liệu thực tế đã kiểm tra, ~89% bản ghi CCCD
+    trong log Minh Lộ bị lỗi này — nếu không khôi phục lại số 0, hầu hết các
+    trường hợp so khớp CCCD sẽ thất bại một cách âm thầm dù đúng là cùng 1
+    người, khiến bệnh nhân bị đẩy nhầm xuống tầng so khớp thấp hơn (tên+năm
+    sinh) hoặc bị coi là "chưa đến khám".
+
+    CMND cũ (9 chữ số, trước khi đổi sang CCCD 12 số) giữ nguyên, không pad.
+    """
     d = re.sub(r"\D", "", str(s or ""))
+    if len(d) == 11:
+        d = "0" + d
     return d if len(d) >= 8 else ""
 
 
@@ -1519,14 +1534,20 @@ def reconcile_attendance(sheet_patients, visit_records,
 
     THUẬT TOÁN so khớp ĐÚNG NGƯỜI — 3 tầng ưu tiên (chỉ xét trong số các lượt
     khám thực tế đã lọc theo cửa sổ ngày ở trên):
-      1. CCCD/CMND khớp đúng (đã chuẩn hoá)     → khớp CHẮC CHẮN ngay lập tức
+      1. CCCD/CMND khớp đúng (đã chuẩn hoá, tự khôi phục số 0 đầu bị Excel
+         làm mất) → khớp CHẮC CHẮN ngay lập tức
       2. Số điện thoại khớp đúng (đã chuẩn hoá) → khớp CHẮC CHẮN ngay lập tức
       3. Không có CCCD/SĐT khớp → chấm điểm dự phòng bằng tên + năm sinh:
            · Độ giống tên (difflib ratio 0..1) × 55  → tối đa +55 điểm
            · Năm sinh trùng khớp chính xác            → +15 điểm
            · Năm sinh lệch đúng 1 (ước tính từ tuổi)   → +7 điểm
-         ≥ 45 điểm (tên gần khớp + năm sinh lệch ≤1)  → khớp NGHI NGỜ,
-           cần người dùng xác nhận tay trước khi ghi vào Sheet
+         ≥ 70 điểm (tên khớp gần tuyệt đối + năm sinh khớp CHÍNH XÁC)
+           → vẫn coi là khớp CHẮC CHẮN (rất nhiều bệnh nhân — nhất là nhóm
+             tái khám tự động import — không có CCCD/SĐT đáng tin cậy để
+             so ở tầng 1-2, nên tầng 3 cần đủ mạnh để tự kết luận thay vì
+             luôn đẩy xuống "cần xác nhận tay")
+         45-69 điểm (tên gần khớp nhưng năm sinh lệch, hoặc thiếu 1 trong 2)
+           → khớp NGHI NGỜ, cần người dùng xác nhận tay trước khi ghi vào Sheet
          < 45 điểm hoặc không có ứng viên nào trong cửa sổ → CHƯA ĐẾN KHÁM
 
     sheet_patients: list dict {"sheet_row","name","phone","cccd","birth_year","exam_date","source"}
@@ -1534,8 +1555,10 @@ def reconcile_attendance(sheet_patients, visit_records,
 
     Trả về list dict, 1 phần tử / bệnh nhân đã hẹn, gồm:
       sheet_row, name, exam_date, source, score, visit (bản ghi khớp hoặc None), status:
-        "attended_sure"   → ĐÃ ĐẾN khám (khớp CCCD hoặc SĐT — chắc chắn)
-        "attended_unsure" → CÓ THỂ đã đến (chỉ khớp tên+năm sinh — cần xác nhận tay)
+        "attended_sure"   → ĐÃ ĐẾN khám (khớp CCCD/SĐT chắc chắn, HOẶC tên+năm
+                             sinh khớp gần như tuyệt đối — điểm ≥70)
+        "attended_unsure" → CÓ THỂ đã đến (chỉ khớp tên+năm sinh ở mức vừa phải
+                             — điểm 45-69 — cần xác nhận tay)
         "not_attended"    → CHƯA ĐẾN khám (không tìm thấy trong cửa sổ)
     """
     today_d = today if today is not None else datetime.now().date()
@@ -1612,7 +1635,14 @@ def reconcile_attendance(sheet_patients, visit_records,
                 best, best_score = v, score
 
         entry["score"] = round(best_score, 1)
-        if best is not None and best_score >= 45:
+        if best is not None and best_score >= 70:
+            # Tên gần như khớp tuyệt đối (difflib ratio ~1.0) VÀ năm sinh
+            # khớp chính xác — đủ chắc chắn để coi là "đã đến", không cần
+            # người dùng xác nhận tay (chỉ đạt mốc này khi CẢ 2 điều kiện
+            # cùng đúng, vd tên khớp 100% một mình chỉ được 55đ < 70).
+            entry["visit"] = best
+            entry["status"] = "attended_sure"
+        elif best is not None and best_score >= 45:
             entry["visit"] = best
             entry["status"] = "attended_unsure"
         else:
