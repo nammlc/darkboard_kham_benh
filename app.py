@@ -1601,6 +1601,7 @@ def reconcile_attendance(sheet_patients, visit_records,
         entry = {
             "sheet_row": p.get("sheet_row"), "name": p_name,
             "phone": p.get("phone", ""), "age": p.get("age", ""),
+            "birth_year": p.get("birth_year", ""),
             "exam_date": exam_date, "source": p.get("source", ""),
             "visit": None, "score": 0.0,
         }
@@ -3551,12 +3552,14 @@ if st.session_state.metrics:
                         table_rows.append({
                             "Họ tên": r["name"],
                             "SĐT": r.get("phone", "") or "—",
+                            "Năm sinh": r.get("birth_year", "") or "—",
                             "Tuổi": r.get("age", "") or "—",
                             "Nguồn bệnh nhân": r.get("source", "") or "—",
                             "Ngày hẹn": r["exam_date"].strftime("%d/%m/%Y") if r["exam_date"] else "—",
                             "Kết quả": STATUS_LABEL[r["status"]],
                             "Ngày thực đến": v["NGÀY ĐK"] if v else "—",
                             "SĐT lúc khám": v.get("SỐ ĐIỆN THOẠI", "") if v else "—",
+                            "Năm sinh lúc khám": v.get("NĂM SINH", "") if v else "—",
                             "Tuổi lúc khám": v.get("TUỔI", "") if v else "—",
                             "Độ tin cậy": f"{r['score']:.0f}%",
                             "Khoa thực khám": v.get("KHOA ĐK", "") if v else "—",
@@ -3565,43 +3568,76 @@ if st.session_state.metrics:
                                  hide_index=True, height=360)
 
                     # ── Cập nhật hàng loạt trạng thái "ĐÃ KHÁM" — CHỈ cho các ca
-                    # khớp CHẮC CHẮN (CCCD/SĐT). Ca "cần xác nhận" (chỉ khớp tên
-                    # + năm sinh) KHÔNG tự động ghi vào Sheet — phải xác nhận tay
-                    # (vd. qua nút "Sửa" ở tab "3 Ngày Tới") để tránh gán nhầm người.
+                    # khớp CHẮC CHẮN (qua SĐT, hoặc tên+tuổi+năm sinh khớp gần
+                    # như tuyệt đối). Ca "cần xác nhận" (khớp tên+tuổi+năm sinh
+                    # ở mức vừa phải) KHÔNG tự động ghi vào Sheet — phải xác
+                    # nhận tay (vd. qua nút "Sửa" ở tab "3 Ngày Tới").
                     confirmable = [r for r in results if r["status"] == "attended_sure"]
-                    st.markdown(
-                        f'<div class="pg-info" style="text-align:left;margin:0.8rem 0">'
-                        f'Có <b>{len(confirmable)}</b> bệnh nhân khớp CHẮC CHẮN (CCCD hoặc SĐT) '
-                        f'đang ở trạng thái khác "Đã khám" trên Sheet. Nhóm "cần xác nhận" '
-                        f'({nghi_ngo} ca) không được tự động cập nhật.</div>',
-                        unsafe_allow_html=True
-                    )
                     to_update = [
-                        r["sheet_row"] for r in confirmable
+                        r for r in confirmable
                         if STATUS_ATTENDED.upper() not in str(
                             next((p["status_now"] for p in sheet_patients if p["sheet_row"] == r["sheet_row"]), "")
                         ).upper()
                     ]
+
+                    st.markdown(
+                        '<div class="sh"><div class="sh-dot" style="background:#10b981"></div>'
+                        '<span class="sh-txt">📋 Bước 2 — Xem Lại Danh Sách Trước Khi Cập Nhật</span></div>',
+                        unsafe_allow_html=True
+                    )
+                    st.markdown(
+                        f'<div class="pg-info" style="text-align:left;margin:0.5rem 0 0.8rem">'
+                        f'Có <b>{len(to_update)}</b> bệnh nhân khớp CHẮC CHẮN (qua SĐT, hoặc tên+tuổi+năm sinh '
+                        f'khớp gần như tuyệt đối) và đang ở trạng thái khác "Đã khám" trên Sheet. '
+                        f'Nhóm "cần xác nhận" ({nghi_ngo} ca) <b>không</b> nằm trong danh sách này — '
+                        f'không tự động cập nhật. Kiểm tra kỹ danh sách dưới đây trước khi bấm cập nhật.</div>',
+                        unsafe_allow_html=True
+                    )
+
+                    if to_update:
+                        confirm_rows = [{
+                            "Họ tên": r["name"],
+                            "SĐT": r.get("phone", "") or "—",
+                            "Năm sinh": r.get("birth_year", "") or "—",
+                            "Tuổi": r.get("age", "") or "—",
+                            "Nguồn bệnh nhân": r.get("source", "") or "—",
+                            "Ngày hẹn": r["exam_date"].strftime("%d/%m/%Y") if r["exam_date"] else "—",
+                            "Ngày thực đến": r["visit"]["NGÀY ĐK"] if r.get("visit") else "—",
+                            "Khớp qua": "SĐT" if r["score"] == 100.0 else "Tên+Tuổi+Năm sinh",
+                        } for r in to_update]
+                        st.dataframe(pd.DataFrame(confirm_rows), use_container_width=True,
+                                     hide_index=True, height=min(360, 70 + 35 * len(confirm_rows)))
+
+                        confirm_check = st.checkbox(
+                            f"✅ Tôi đã xem kỹ danh sách {len(to_update)} bệnh nhân ở trên và xác nhận "
+                            f"đúng người trước khi ghi vào Google Sheet",
+                            key="rec_confirm_check"
+                        )
+                    else:
+                        confirm_check = False
+                        st.info("Không có bệnh nhân nào đủ điều kiện cập nhật tự động ở lần đối chiếu này.")
+
                     bc1, bc2 = st.columns([2, 1])
                     with bc1:
                         if st.button(f"✅ Cập Nhật \"Đã Khám\" Cho {len(to_update)} Bệnh Nhân",
                                      type="primary", use_container_width=True,
-                                     disabled=(len(to_update) == 0)):
+                                     disabled=(len(to_update) == 0 or not confirm_check)):
                             if not creds_data:
                                 st.error("❌ Chưa có credentials. Kiểm tra Streamlit Secrets.")
                             else:
                                 with st.spinner(f"Đang cập nhật {len(to_update)} dòng…"):
                                     n_ok, err_batch = update_patient_status_batch(
                                         creds_data, SHEET_ID, SHEET_NAME,
-                                        [(sr, STATUS_ATTENDED) for sr in to_update]
+                                        [(r["sheet_row"], STATUS_ATTENDED) for r in to_update]
                                     )
                                 if err_batch:
                                     st.error(f"❌ {err_batch}")
                                 else:
-                                    st.success(f"✅ Đã cập nhật trạng thái cho {n_ok} bệnh nhân!")
+                                    st.success(f"✅ Đã cập nhật cột TRẠNG THÁI thành \"Đã khám\" cho {n_ok} bệnh nhân!")
                                     st.session_state.metrics = None
                                     st.session_state.pop("rec_results", None)
                                     st.session_state.pop("rec_sheet_patients", None)
+                                    st.session_state.pop("rec_confirm_check", None)
                                     st.balloons()
                     with bc2:
                         csv_rec = pd.DataFrame(table_rows).to_csv(index=False, encoding="utf-8-sig")
