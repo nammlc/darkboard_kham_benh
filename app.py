@@ -3366,32 +3366,51 @@ if st.session_state.metrics:
                     '<span class="sh-txt">⚙️ Tuỳ Chọn Đối Chiếu</span></div>',
                     unsafe_allow_html=True
                 )
-                oc1, oc2, oc3 = st.columns(3)
+                oc1, oc2 = st.columns(2)
                 with oc1:
-                    scope_opt = st.radio(
-                        "Phạm vi bệnh nhân cần kiểm tra",
-                        ["Chỉ bệnh nhân CHƯA KHÁM", "Toàn bộ bệnh nhân"],
-                        key="rec_scope",
+                    date_range = st.date_input(
+                        "Khoảng NGÀY HẸN cần kiểm tra (trên Google Sheet)",
+                        value=(today, today + timedelta(days=7)),
+                        key="rec_daterange",
+                        help="Mặc định 1 tuần kể từ hôm nay — chỉ bệnh nhân có Ngày khám "
+                             "rơi vào khoảng này mới được đưa vào đối chiếu."
                     )
                 with oc2:
+                    only_unattended = st.checkbox(
+                        "Chỉ kiểm tra bệnh nhân đang ở trạng thái CHƯA KHÁM",
+                        value=True, key="rec_only_unattended",
+                        help="Bỏ tích nếu muốn đối chiếu lại cả những ca đã đánh dấu Đã khám."
+                    )
+
+                oc3, oc4 = st.columns(2)
+                with oc3:
                     window_before = st.number_input(
                         "Chấp nhận đến SỚM hơn hẹn (ngày)", min_value=0, max_value=90,
                         value=3, key="rec_wbefore"
                     )
-                with oc3:
+                with oc4:
                     window_after = st.number_input(
                         "Chấp nhận đến MUỘN hơn hẹn (ngày)", min_value=0, max_value=180,
                         value=30, key="rec_wafter"
                     )
 
+                if isinstance(date_range, tuple) and len(date_range) == 2:
+                    range_start, range_end = date_range
+                else:
+                    # Người dùng mới chọn 1 đầu ngày, chưa chọn xong khoảng
+                    range_start, range_end = date_range, date_range
+
                 df_full_src = m.get("df_full", df)
-                if scope_opt == "Chỉ bệnh nhân CHƯA KHÁM":
-                    scope_df = df_full_src[
-                        ~df_full_src[COL_STATUS].astype(str).str.upper()
+                scope_df = df_full_src[
+                    df_full_src["_date"].notna()
+                    & (df_full_src["_date"].dt.date >= range_start)
+                    & (df_full_src["_date"].dt.date <= range_end)
+                ]
+                if only_unattended:
+                    scope_df = scope_df[
+                        ~scope_df[COL_STATUS].astype(str).str.upper()
                           .str.contains(STATUS_ATTENDED.upper(), na=False)
                     ]
-                else:
-                    scope_df = df_full_src
 
                 sheet_patients = []
                 for idx2, row in scope_df.iterrows():
@@ -3405,7 +3424,11 @@ if st.session_state.metrics:
                         "status_now": row.get(COL_STATUS, ""),
                     })
 
-                st.caption(f"Sẽ kiểm tra **{len(sheet_patients)}** bệnh nhân trên Google Sheet.")
+                st.caption(
+                    f"📅 Từ **{range_start.strftime('%d/%m/%Y')}** đến "
+                    f"**{range_end.strftime('%d/%m/%Y')}** · "
+                    f"Sẽ kiểm tra **{len(sheet_patients)}** bệnh nhân trên Google Sheet."
+                )
 
                 if st.button("🔍 Bắt Đầu Đối Chiếu", type="primary", use_container_width=True,
                              disabled=(len(sheet_patients) == 0)):
@@ -3425,6 +3448,14 @@ if st.session_state.metrics:
                         "no_match":     "❌ Chưa đến khám",
                     }
                     counts = Counter(r["status"] for r in results)
+                    da_den = counts.get("match_ok", 0) + counts.get("match_offset", 0)
+                    chua_den = counts.get("no_match", 0)
+                    st.success(
+                        f"📊 **Kết quả đối chiếu {len(results)} bệnh nhân**: "
+                        f"**{da_den}** người đã đến khám · "
+                        f"**{chua_den}** người chưa đến khám · "
+                        f"**{counts.get('match_unsure',0)}** ca nghi ngờ cần bạn xác nhận tay."
+                    )
 
                     st.markdown(f"""
                     <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:0.6rem;margin:0.9rem 0">
