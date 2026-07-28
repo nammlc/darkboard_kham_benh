@@ -1935,22 +1935,30 @@ def paginate_list(items, state_key, page_size=PAGE_SIZE):
     return items[start:end], cur, total_pages, start, end, total
 
 
-def render_pagination_bar(state_key, cur, total_pages, start, end, total, label="bệnh nhân"):
+def render_pagination_bar(state_key, cur, total_pages, start, end, total, label="bệnh nhân", widget_key=None):
     """Thanh điều hướng phân trang « ‹ [số trang…] › » dùng chung, khớp UI
-    với render_paginated_cards / render_upcoming_table."""
+    với render_paginated_cards / render_upcoming_table.
+
+    state_key  : khoá session_state lưu trang hiện tại (dùng để ĐỌC/GHI trang).
+    widget_key : tiền tố khoá riêng cho các nút bấm/container của LẦN GỌI này —
+                 mặc định = state_key. Truyền khác nhau khi cùng 1 state_key
+                 được hiển thị thanh điều hướng 2 nơi trên trang (vd. trên đầu
+                 VÀ dưới cuối 1 danh sách dài) để tránh trùng khoá widget.
+    """
     if total_pages <= 1:
         return
+    wkey = widget_key or state_key
     st.markdown(
         f'<div class="pg-info">Trang <b>{cur}</b>/<b>{total_pages}</b> '
         f'&nbsp;·&nbsp; Hiển thị <b>{start+1}–{min(end,total)}</b> / <b>{total}</b> {label}</div>',
         unsafe_allow_html=True
     )
     nums = _paginate_page_numbers(cur, total_pages)
-    with st.container(key=f"{state_key}_pgrow"):
+    with st.container(key=f"{wkey}_pgrow"):
         cols = st.columns([1] + [1] * len(nums) + [1])
         with cols[0]:
-            with st.container(key=f"{state_key}_navbtn_prev"):
-                if st.button("‹", key=f"{state_key}_prev", disabled=(cur == 1), use_container_width=True):
+            with st.container(key=f"{wkey}_navbtn_prev"):
+                if st.button("‹", key=f"{wkey}_prev", disabled=(cur == 1), use_container_width=True):
                     st.session_state[state_key] = cur - 1
                     _smart_rerun()
         for i, p in enumerate(nums):
@@ -1964,15 +1972,15 @@ def render_pagination_bar(state_key, cur, total_pages, start, end, total, label=
                 else:
                     is_cur = (p == cur)
                     if is_cur:
-                        with st.container(key=f"{state_key}_curbtn_{p}"):
-                            st.button(str(p), key=f"{state_key}_p{p}", disabled=True, use_container_width=True)
+                        with st.container(key=f"{wkey}_curbtn_{p}"):
+                            st.button(str(p), key=f"{wkey}_p{p}", disabled=True, use_container_width=True)
                     else:
-                        if st.button(str(p), key=f"{state_key}_p{p}", use_container_width=True):
+                        if st.button(str(p), key=f"{wkey}_p{p}", use_container_width=True):
                             st.session_state[state_key] = p
                             _smart_rerun()
         with cols[1 + len(nums)]:
-            with st.container(key=f"{state_key}_navbtn_next"):
-                if st.button("›", key=f"{state_key}_next", disabled=(cur == total_pages), use_container_width=True):
+            with st.container(key=f"{wkey}_navbtn_next"):
+                if st.button("›", key=f"{wkey}_next", disabled=(cur == total_pages), use_container_width=True):
                     st.session_state[state_key] = cur + 1
                     _smart_rerun()
 
@@ -3801,7 +3809,8 @@ if st.session_state.metrics:
                         page_rev, rev_cur, rev_total, rev_start, rev_end, rev_tot = paginate_list(
                             need_review, "pg_rec_review", page_size=5
                         )
-                        render_pagination_bar("pg_rec_review", rev_cur, rev_total, rev_start, rev_end, rev_tot)
+                        render_pagination_bar("pg_rec_review", rev_cur, rev_total, rev_start, rev_end, rev_tot,
+                                               widget_key="pg_rec_review_top")
                         for r in page_rev:
                             v = r.get("visit") or {}
                             with st.expander(
@@ -3863,7 +3872,8 @@ if st.session_state.metrics:
                                             else:
                                                 st.success("✅ Đã đánh dấu Đã khám cho bệnh nhân này.")
                                                 st.session_state.metrics = None
-                        render_pagination_bar("pg_rec_review", rev_cur, rev_total, rev_start, rev_end, rev_tot)
+                        render_pagination_bar("pg_rec_review", rev_cur, rev_total, rev_start, rev_end, rev_tot,
+                                               widget_key="pg_rec_review_bottom")
 
 
 
