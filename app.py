@@ -1909,6 +1909,74 @@ def _paginate_page_numbers(current, total):
         prev = p
     return out
 
+def paginate_list(items, state_key, page_size=PAGE_SIZE):
+    """
+    Phân trang 1 LIST bất kỳ (khác render_paginated_cards vốn chỉ nhận
+    DataFrame) — dùng cho danh sách dict, vd. kết quả đối chiếu tái khám.
+    Session_state riêng theo state_key, tự reset về trang 1 khi độ dài
+    danh sách thay đổi (đổi bộ lọc / chạy đối chiếu lại).
+
+    Trả về: (page_items, cur, total_pages, start, end, total)
+    """
+    total = len(items)
+    if total == 0:
+        return [], 1, 1, 0, 0, 0
+    total_pages = max(1, (total + page_size - 1) // page_size)
+    fp_key = state_key + "_fp"
+    if state_key not in st.session_state:
+        st.session_state[state_key] = 1
+    if st.session_state.get(fp_key) != total:
+        st.session_state[fp_key] = total
+        st.session_state[state_key] = 1
+    cur = min(max(1, st.session_state[state_key]), total_pages)
+    st.session_state[state_key] = cur
+    start = (cur - 1) * page_size
+    end = start + page_size
+    return items[start:end], cur, total_pages, start, end, total
+
+
+def render_pagination_bar(state_key, cur, total_pages, start, end, total, label="bệnh nhân"):
+    """Thanh điều hướng phân trang « ‹ [số trang…] › » dùng chung, khớp UI
+    với render_paginated_cards / render_upcoming_table."""
+    if total_pages <= 1:
+        return
+    st.markdown(
+        f'<div class="pg-info">Trang <b>{cur}</b>/<b>{total_pages}</b> '
+        f'&nbsp;·&nbsp; Hiển thị <b>{start+1}–{min(end,total)}</b> / <b>{total}</b> {label}</div>',
+        unsafe_allow_html=True
+    )
+    nums = _paginate_page_numbers(cur, total_pages)
+    with st.container(key=f"{state_key}_pgrow"):
+        cols = st.columns([1] + [1] * len(nums) + [1])
+        with cols[0]:
+            with st.container(key=f"{state_key}_navbtn_prev"):
+                if st.button("‹", key=f"{state_key}_prev", disabled=(cur == 1), use_container_width=True):
+                    st.session_state[state_key] = cur - 1
+                    _smart_rerun()
+        for i, p in enumerate(nums):
+            with cols[1 + i]:
+                if p is None:
+                    st.markdown(
+                        '<div style="text-align:center;color:#94a3b8;font-size:0.68rem;'
+                        'height:1.7rem;line-height:1.7rem">…</div>',
+                        unsafe_allow_html=True
+                    )
+                else:
+                    is_cur = (p == cur)
+                    if is_cur:
+                        with st.container(key=f"{state_key}_curbtn_{p}"):
+                            st.button(str(p), key=f"{state_key}_p{p}", disabled=True, use_container_width=True)
+                    else:
+                        if st.button(str(p), key=f"{state_key}_p{p}", use_container_width=True):
+                            st.session_state[state_key] = p
+                            _smart_rerun()
+        with cols[1 + len(nums)]:
+            with st.container(key=f"{state_key}_navbtn_next"):
+                if st.button("›", key=f"{state_key}_next", disabled=(cur == total_pages), use_container_width=True):
+                    st.session_state[state_key] = cur + 1
+                    _smart_rerun()
+
+
 def render_paginated_cards(items_df, state_key, render_fn=None, page_size=PAGE_SIZE):
     """
     Hiển thị danh sách bệnh nhân dưới dạng thẻ (card), phân trang thông minh.
@@ -3596,10 +3664,9 @@ if st.session_state.metrics:
                         r for r in results if r["status"] == label_to_key[filter_opt]
                     ]
 
-                    table_rows = []
-                    for r in shown:
+                    def _mk_result_row(r):
                         v = r.get("visit")
-                        table_rows.append({
+                        return {
                             "Họ tên": r["name"],
                             "SĐT": r.get("phone", "") or "—",
                             "Năm sinh": r.get("birth_year", "") or "—",
@@ -3607,15 +3674,25 @@ if st.session_state.metrics:
                             "Nguồn bệnh nhân": r.get("source", "") or "—",
                             "Ngày hẹn": r["exam_date"].strftime("%d/%m/%Y") if r["exam_date"] else "—",
                             "Kết quả": STATUS_LABEL[r["status"]],
+                            "Khớp qua": {1: "Tên + SĐT", 2: "Tên + Năm sinh", 3: "Chỉ Tên"}.get(r.get("match_tier"), "—"),
                             "Ngày thực đến": v["NGÀY ĐK"] if v else "—",
                             "SĐT lúc khám": v.get("SỐ ĐIỆN THOẠI", "") if v else "—",
                             "Năm sinh lúc khám": v.get("NĂM SINH", "") if v else "—",
                             "Tuổi lúc khám": v.get("TUỔI", "") if v else "—",
                             "Độ tin cậy": f"{r['score']:.0f}%",
                             "Khoa thực khám": v.get("KHOA ĐK", "") if v else "—",
-                        })
-                    st.dataframe(pd.DataFrame(table_rows), use_container_width=True,
-                                 hide_index=True, height=360)
+                        }
+
+                    # Bảng CSV luôn xuất TOÀN BỘ kết quả (không chỉ trang đang xem)
+                    table_rows = [_mk_result_row(r) for r in shown]
+
+                    page_shown, pg_cur, pg_total, pg_start, pg_end, pg_tot = paginate_list(
+                        shown, "pg_rec_results"
+                    )
+                    st.dataframe(pd.DataFrame([_mk_result_row(r) for r in page_shown]),
+                                 use_container_width=True, hide_index=True,
+                                 height=min(420, 70 + 35 * max(1, len(page_shown))))
+                    render_pagination_bar("pg_rec_results", pg_cur, pg_total, pg_start, pg_end, pg_tot)
 
                     # ── Cập nhật hàng loạt trạng thái "ĐÃ KHÁM" — CHỈ cho các ca
                     # khớp CHẮC CHẮN ở Tầng 1 (Tên+SĐT) hoặc Tầng 2 (Tên+Năm sinh
@@ -3644,18 +3721,26 @@ if st.session_state.metrics:
                     )
 
                     if to_update:
-                        confirm_rows = [{
-                            "Họ tên": r["name"],
-                            "SĐT": r.get("phone", "") or "—",
-                            "Năm sinh": r.get("birth_year", "") or "—",
-                            "Tuổi": r.get("age", "") or "—",
-                            "Nguồn bệnh nhân": r.get("source", "") or "—",
-                            "Ngày hẹn": r["exam_date"].strftime("%d/%m/%Y") if r["exam_date"] else "—",
-                            "Ngày thực đến": r["visit"]["NGÀY ĐK"] if r.get("visit") else "—",
-                            "Khớp qua": {1: "Tên + SĐT", 2: "Tên + Năm sinh"}.get(r.get("match_tier"), "—"),
-                        } for r in to_update]
-                        st.dataframe(pd.DataFrame(confirm_rows), use_container_width=True,
-                                     hide_index=True, height=min(360, 70 + 35 * len(confirm_rows)))
+                        def _mk_confirm_row(r):
+                            return {
+                                "Họ tên": r["name"],
+                                "SĐT": r.get("phone", "") or "—",
+                                "Năm sinh": r.get("birth_year", "") or "—",
+                                "Tuổi": r.get("age", "") or "—",
+                                "Nguồn bệnh nhân": r.get("source", "") or "—",
+                                "Ngày hẹn": r["exam_date"].strftime("%d/%m/%Y") if r["exam_date"] else "—",
+                                "Ngày thực đến": r["visit"]["NGÀY ĐK"] if r.get("visit") else "—",
+                                "Khớp qua": {1: "Tên + SĐT", 2: "Tên + Năm sinh"}.get(r.get("match_tier"), "—"),
+                            }
+                        # Nút "Cập Nhật" bên dưới luôn áp dụng cho TOÀN BỘ to_update
+                        # (không chỉ trang đang xem) — phân trang chỉ để XEM cho gọn.
+                        page_upd, upd_cur, upd_total, upd_start, upd_end, upd_tot = paginate_list(
+                            to_update, "pg_rec_confirm"
+                        )
+                        st.dataframe(pd.DataFrame([_mk_confirm_row(r) for r in page_upd]),
+                                     use_container_width=True, hide_index=True,
+                                     height=min(360, 70 + 35 * max(1, len(page_upd))))
+                        render_pagination_bar("pg_rec_confirm", upd_cur, upd_total, upd_start, upd_end, upd_tot)
 
                         confirm_check = st.checkbox(
                             f"✅ Tôi đã xem kỹ danh sách {len(to_update)} bệnh nhân ở trên và xác nhận "
@@ -3713,7 +3798,11 @@ if st.session_state.metrics:
                             f"(không có SĐT hoặc năm sinh để xác nhận thêm) — xem kỹ thông tin 2 bên rồi "
                             f"chọn 1 trong 2 cách xử lý cho từng người."
                         )
-                        for r in need_review:
+                        page_rev, rev_cur, rev_total, rev_start, rev_end, rev_tot = paginate_list(
+                            need_review, "pg_rec_review", page_size=5
+                        )
+                        render_pagination_bar("pg_rec_review", rev_cur, rev_total, rev_start, rev_end, rev_tot)
+                        for r in page_rev:
                             v = r.get("visit") or {}
                             with st.expander(
                                 f"👤 {r['name']}  ·  hẹn {r['exam_date'].strftime('%d/%m/%Y') if r['exam_date'] else '—'}"
@@ -3774,6 +3863,7 @@ if st.session_state.metrics:
                                             else:
                                                 st.success("✅ Đã đánh dấu Đã khám cho bệnh nhân này.")
                                                 st.session_state.metrics = None
+                        render_pagination_bar("pg_rec_review", rev_cur, rev_total, rev_start, rev_end, rev_tot)
 
 
 
