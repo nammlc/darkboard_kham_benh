@@ -3532,204 +3532,146 @@ if st.session_state.metrics:
             '<span class="sh-txt">Đối Chiếu Bệnh Nhân Đã Hẹn Với Thực Tế Đến Khám</span></div>',
             unsafe_allow_html=True
         )
-        st.markdown("""
-        <div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:12px;
-                    padding:1rem 1.2rem;margin-bottom:1rem;font-size:0.83rem;color:#1e40af">
-          <b>📋 Hướng dẫn:</b><br>
-          1. Vào Minh Lộ → Báo cáo → <b>ĐK Khám Chữa Bệnh</b><br>
-          2. Chọn <b>khoảng ngày rộng</b> (vd. cả tháng, hoặc từ ngày hẹn sớm nhất tới nay) → Export Excel<br>
-          3. Upload file vào đây — hệ thống sẽ tự dò từng bệnh nhân <b>chưa khám</b> trên Sheet
-          xem có xuất hiện trong log này không, <b>không cần đúng 1 ngày</b> (đến sớm/muộn vẫn bắt được)
-        </div>
-        """, unsafe_allow_html=True)
+        gtab_tk, gtab_vl = st.tabs(["🧮 Tái Khám — Đối Chiếu Tự Động", "📝 Vãng Lai — Check Thủ Công"])
 
-        visit_file = st.file_uploader(
-            "Upload file Excel \"Báo cáo ĐK KCB\" từ Minh Lộ (.xlsx)",
-            type=["xlsx"], key="visit_log_uploader",
-            help="File log bệnh nhân THỰC TẾ đến khám, xuất theo khoảng ngày rộng"
-        )
+        with gtab_tk:
+            st.markdown("""
+            <div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:12px;
+                        padding:1rem 1.2rem;margin-bottom:1rem;font-size:0.83rem;color:#1e40af">
+              <b>📋 Hướng dẫn:</b><br>
+              1. Vào Minh Lộ → Báo cáo → <b>ĐK Khám Chữa Bệnh</b><br>
+              2. Chọn <b>khoảng ngày rộng</b> (vd. cả tháng, hoặc từ ngày hẹn sớm nhất tới nay) → Export Excel<br>
+              3. Upload file vào đây — hệ thống sẽ tự dò từng bệnh nhân <b>chưa khám</b> trên Sheet
+              xem có xuất hiện trong log này không, <b>không cần đúng 1 ngày</b> (đến sớm/muộn vẫn bắt được)
+            </div>
+            """, unsafe_allow_html=True)
 
-        if visit_file is not None:
-            with st.spinner("Đang đọc file Excel…"):
-                visit_records, err_vl = parse_minh_lo_visit_log(visit_file)
+            visit_file = st.file_uploader(
+                "Upload file Excel \"Báo cáo ĐK KCB\" từ Minh Lộ (.xlsx)",
+                type=["xlsx"], key="visit_log_uploader",
+                help="File log bệnh nhân THỰC TẾ đến khám, xuất theo khoảng ngày rộng"
+            )
 
-            if err_vl:
-                st.error(f"❌ {err_vl}")
-            elif not visit_records:
-                st.warning("⚠️ Không tìm thấy dữ liệu trong file. Kiểm tra đúng loại báo cáo \"ĐK KCB\".")
-            else:
-                vdates = [d for d in (_parse_ddmmyyyy(v["NGÀY ĐK"]) for v in visit_records) if d]
-                vmin = min(vdates).strftime("%d/%m/%Y") if vdates else "?"
-                vmax = max(vdates).strftime("%d/%m/%Y") if vdates else "?"
-                st.success(f"✅ Đọc được **{len(visit_records)}** lượt khám thực tế, từ **{vmin}** đến **{vmax}**")
+            if visit_file is not None:
+                with st.spinner("Đang đọc file Excel…"):
+                    visit_records, err_vl = parse_minh_lo_visit_log(visit_file)
 
-                st.markdown(
-                    '<div class="sh"><div class="sh-dot" style="background:#f59e0b"></div>'
-                    '<span class="sh-txt">⚙️ Phạm Vi Đối Chiếu</span></div>',
-                    unsafe_allow_html=True
-                )
+                if err_vl:
+                    st.error(f"❌ {err_vl}")
+                elif not visit_records:
+                    st.warning("⚠️ Không tìm thấy dữ liệu trong file. Kiểm tra đúng loại báo cáo \"ĐK KCB\".")
+                else:
+                    vdates = [d for d in (_parse_ddmmyyyy(v["NGÀY ĐK"]) for v in visit_records) if d]
+                    vmin = min(vdates).strftime("%d/%m/%Y") if vdates else "?"
+                    vmax = max(vdates).strftime("%d/%m/%Y") if vdates else "?"
+                    st.success(f"✅ Đọc được **{len(visit_records)}** lượt khám thực tế, từ **{vmin}** đến **{vmax}**")
 
-                range_start = today - timedelta(days=RECONCILE_LOOKBACK_DAYS)
-                range_end = today
-
-                st.markdown(f"""
-                <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:12px;
-                            padding:0.9rem 1.1rem;margin-bottom:0.9rem;font-size:0.82rem;color:#334155">
-                  📅 Danh sách gốc: bệnh nhân có <b>NGÀY KHÁM</b> từ
-                  <b>{range_start.strftime('%d/%m/%Y')}</b> đến <b>{range_end.strftime('%d/%m/%Y')}</b>
-                  ({RECONCILE_LOOKBACK_DAYS} ngày gần nhất) và đang <b>CHƯA KHÁM</b> —
-                  bao gồm <b>cả 2 nguồn</b>: bệnh nhân từ khoa (tái khám) lẫn bệnh nhân vãng lai.<br>
-                  🔍 Với mỗi bệnh nhân, chỉ chấp nhận lượt đến khám thực tế nằm trong cửa sổ
-                  <b>[Ngày hẹn − {RECONCILE_WINDOW_BEFORE}, min(Ngày hẹn + {RECONCILE_WINDOW_AFTER}, Hôm nay)]</b>
-                  — cửa sổ tự thu hẹp khi ngày hẹn gần hôm nay, để không nhầm sang một đợt khám
-                  <i>khác</i> (vd. đợt khám cũ) của cùng bệnh nhân.
-                </div>
-                """, unsafe_allow_html=True)
-
-                df_full_src = m.get("df_full", df)
-                scope_df = df_full_src[
-                    df_full_src["_date"].notna()
-                    & (df_full_src["_date"].dt.date >= range_start)
-                    & (df_full_src["_date"].dt.date <= range_end)
-                    & (~df_full_src[COL_STATUS].astype(str).str.upper()
-                         .str.contains(STATUS_ATTENDED.upper(), na=False))
-                ]
-
-                sheet_patients = []
-                for idx2, row in scope_df.iterrows():
-                    exam_date = row["_date"].date() if pd.notna(row.get("_date")) else None
-                    sheet_patients.append({
-                        "sheet_row": int(idx2) + 2,
-                        "name": row.get(COL_NAME, ""),
-                        "phone": row.get(COL_PHONE, ""),
-                        "cccd": row.get(COL_CCCD, ""),
-                        "birth_year": row.get(COL_BIRTH_YEAR, ""),
-                        "age": row.get(COL_AGE, "") if COL_AGE in row.index else "",
-                        "exam_date": exam_date,
-                        "source": row.get(COL_SOURCE, ""),
-                        "status_now": row.get(COL_STATUS, ""),
-                    })
-
-                n_khoa = sum(1 for p in sheet_patients
-                             if "khoa" in str(p["source"]).lower() or "tái" in str(p["source"]).lower()
-                             or "tai" in str(p["source"]).lower())
-                n_vl = sum(1 for p in sheet_patients
-                           if "vãng lai" in str(p["source"]).lower() or "vang lai" in str(p["source"]).lower())
-                st.caption(
-                    f"Sẽ kiểm tra **{len(sheet_patients)}** bệnh nhân chưa khám "
-                    f"(≈{n_khoa} từ khoa/tái khám · ≈{n_vl} vãng lai · còn lại nguồn khác)."
-                )
-
-                if st.button("🔍 Bắt Đầu Đối Chiếu", type="primary", use_container_width=True,
-                             disabled=(len(sheet_patients) == 0)):
-                    with st.spinner("Đang đối chiếu…"):
-                        results = reconcile_attendance(sheet_patients, visit_records, today=today)
-                    st.session_state["rec_results"] = results
-                    st.session_state["rec_sheet_patients"] = sheet_patients
-
-                results = st.session_state.get("rec_results")
-                if results:
-                    STATUS_LABEL = {
-                        "attended_sure":   "✅ Đã đến khám",
-                        "attended_unsure": "❓ Có thể đã đến (cần xác nhận)",
-                        "not_attended":    "⏳ Chưa đến khám",
-                    }
-                    counts = Counter(r["status"] for r in results)
-                    da_den = counts.get("attended_sure", 0)
-                    chua_den = counts.get("not_attended", 0)
-                    nghi_ngo = counts.get("attended_unsure", 0)
-                    st.success(
-                        f"📊 **Kết quả đối chiếu {len(results)} bệnh nhân**: "
-                        f"**{da_den}** đã đến khám (chắc chắn) · "
-                        f"**{chua_den}** chưa đến khám · "
-                        f"**{nghi_ngo}** ca cần xác nhận tay."
+                    st.markdown(
+                        '<div class="sh"><div class="sh-dot" style="background:#f59e0b"></div>'
+                        '<span class="sh-txt">⚙️ Phạm Vi Đối Chiếu</span></div>',
+                        unsafe_allow_html=True
                     )
 
+                    range_start = today - timedelta(days=RECONCILE_LOOKBACK_DAYS)
+                    range_end = today
+
                     st.markdown(f"""
-                    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:0.6rem;margin:0.9rem 0">
-                      <div class="kc kc-g" style="padding:0.8rem 1rem">
-                        <div class="kc-lbl">✅ Đã Đến Khám</div>
-                        <div class="kc-val" style="font-size:1.5rem">{da_den}</div>
-                      </div>
-                      <div class="kc kc-b" style="padding:0.8rem 1rem">
-                        <div class="kc-lbl">❓ Cần Xác Nhận</div>
-                        <div class="kc-val" style="font-size:1.5rem;color:#1d4ed8">{nghi_ngo}</div>
-                      </div>
-                      <div class="kc kc-v" style="padding:0.8rem 1rem">
-                        <div class="kc-lbl">⏳ Chưa Đến</div>
-                        <div class="kc-val" style="font-size:1.5rem">{chua_den}</div>
-                      </div>
+                    <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:12px;
+                                padding:0.9rem 1.1rem;margin-bottom:0.9rem;font-size:0.82rem;color:#334155">
+                      📅 Danh sách gốc: bệnh nhân <b>từ khoa / tái khám</b> có <b>NGÀY KHÁM</b> từ
+                      <b>{range_start.strftime('%d/%m/%Y')}</b> đến <b>{range_end.strftime('%d/%m/%Y')}</b>
+                      ({RECONCILE_LOOKBACK_DAYS} ngày gần nhất) và đang <b>CHƯA KHÁM</b>.
+                      <i>(Bệnh nhân vãng lai check ở tab bên cạnh — không cần thuật toán vì không có
+                      lịch hẹn cố định để đối chiếu).</i><br>
+                      🔍 Với mỗi bệnh nhân, chỉ chấp nhận lượt đến khám thực tế nằm trong cửa sổ
+                      <b>[Ngày hẹn − {RECONCILE_WINDOW_BEFORE}, min(Ngày hẹn + {RECONCILE_WINDOW_AFTER}, Hôm nay)]</b>
+                      — cửa sổ tự thu hẹp khi ngày hẹn gần hôm nay, để không nhầm sang một đợt khám
+                      <i>khác</i> (vd. đợt khám cũ) của cùng bệnh nhân.
                     </div>
                     """, unsafe_allow_html=True)
 
-                    filter_opt = st.selectbox(
-                        "Lọc theo kết quả",
-                        ["Tất cả"] + list(STATUS_LABEL.values()),
-                        key="rec_filter"
-                    )
-                    label_to_key = {v: k for k, v in STATUS_LABEL.items()}
-                    shown = results if filter_opt == "Tất cả" else [
-                        r for r in results if r["status"] == label_to_key[filter_opt]
+                    df_full_src = m.get("df_full", df)
+                    scope_df = df_full_src[
+                        df_full_src["_date"].notna()
+                        & (df_full_src["_date"].dt.date >= range_start)
+                        & (df_full_src["_date"].dt.date <= range_end)
+                        & (~df_full_src[COL_STATUS].astype(str).str.upper()
+                             .str.contains(STATUS_ATTENDED.upper(), na=False))
+                        & (df_full_src[COL_SOURCE].astype(str)
+                             .str.contains("khoa|tái|nội trú|xuất viện|tai", case=False, na=False))
                     ]
 
-                    def _mk_result_row(r):
-                        v = r.get("visit")
-                        return {
-                            "Họ tên": r["name"],
-                            "SĐT": r.get("phone", "") or "—",
-                            "Năm sinh": r.get("birth_year", "") or "—",
-                            "Tuổi": r.get("age", "") or "—",
-                            "Nguồn bệnh nhân": r.get("source", "") or "—",
-                            "Ngày hẹn": r["exam_date"].strftime("%d/%m/%Y") if r["exam_date"] else "—",
-                            "Kết quả": STATUS_LABEL[r["status"]],
-                            "Khớp qua": {1: "Tên + SĐT", 2: "Tên + Năm sinh", 3: "Chỉ Tên"}.get(r.get("match_tier"), "—"),
-                            "Ngày thực đến": v["NGÀY ĐK"] if v else "—",
-                            "SĐT lúc khám": v.get("SỐ ĐIỆN THOẠI", "") if v else "—",
-                            "Năm sinh lúc khám": v.get("NĂM SINH", "") if v else "—",
-                            "Tuổi lúc khám": v.get("TUỔI", "") if v else "—",
-                            "Độ tin cậy": f"{r['score']:.0f}%",
-                            "Khoa thực khám": v.get("KHOA ĐK", "") if v else "—",
+                    sheet_patients = []
+                    for idx2, row in scope_df.iterrows():
+                        exam_date = row["_date"].date() if pd.notna(row.get("_date")) else None
+                        sheet_patients.append({
+                            "sheet_row": int(idx2) + 2,
+                            "name": row.get(COL_NAME, ""),
+                            "phone": row.get(COL_PHONE, ""),
+                            "cccd": row.get(COL_CCCD, ""),
+                            "birth_year": row.get(COL_BIRTH_YEAR, ""),
+                            "age": row.get(COL_AGE, "") if COL_AGE in row.index else "",
+                            "exam_date": exam_date,
+                            "source": row.get(COL_SOURCE, ""),
+                            "status_now": row.get(COL_STATUS, ""),
+                        })
+
+                    st.caption(f"Sẽ kiểm tra **{len(sheet_patients)}** bệnh nhân từ khoa/tái khám chưa khám.")
+
+                    if st.button("🔍 Bắt Đầu Đối Chiếu", type="primary", use_container_width=True,
+                                 disabled=(len(sheet_patients) == 0)):
+                        with st.spinner("Đang đối chiếu…"):
+                            results = reconcile_attendance(sheet_patients, visit_records, today=today)
+                        st.session_state["rec_results"] = results
+                        st.session_state["rec_sheet_patients"] = sheet_patients
+
+                    results = st.session_state.get("rec_results")
+                    if results:
+                        STATUS_LABEL = {
+                            "attended_sure":   "✅ Đã đến khám",
+                            "attended_unsure": "❓ Có thể đã đến (cần xác nhận)",
+                            "not_attended":    "⏳ Chưa đến khám",
                         }
+                        counts = Counter(r["status"] for r in results)
+                        da_den = counts.get("attended_sure", 0)
+                        chua_den = counts.get("not_attended", 0)
+                        nghi_ngo = counts.get("attended_unsure", 0)
+                        st.success(
+                            f"📊 **Kết quả đối chiếu {len(results)} bệnh nhân**: "
+                            f"**{da_den}** đã đến khám (chắc chắn) · "
+                            f"**{chua_den}** chưa đến khám · "
+                            f"**{nghi_ngo}** ca cần xác nhận tay."
+                        )
 
-                    # Bảng CSV luôn xuất TOÀN BỘ kết quả (không chỉ trang đang xem)
-                    table_rows = [_mk_result_row(r) for r in shown]
+                        st.markdown(f"""
+                        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:0.6rem;margin:0.9rem 0">
+                          <div class="kc kc-g" style="padding:0.8rem 1rem">
+                            <div class="kc-lbl">✅ Đã Đến Khám</div>
+                            <div class="kc-val" style="font-size:1.5rem">{da_den}</div>
+                          </div>
+                          <div class="kc kc-b" style="padding:0.8rem 1rem">
+                            <div class="kc-lbl">❓ Cần Xác Nhận</div>
+                            <div class="kc-val" style="font-size:1.5rem;color:#1d4ed8">{nghi_ngo}</div>
+                          </div>
+                          <div class="kc kc-v" style="padding:0.8rem 1rem">
+                            <div class="kc-lbl">⏳ Chưa Đến</div>
+                            <div class="kc-val" style="font-size:1.5rem">{chua_den}</div>
+                          </div>
+                        </div>
+                        """, unsafe_allow_html=True)
 
-                    page_shown, pg_cur, pg_total, pg_start, pg_end, pg_tot = paginate_list(
-                        shown, "pg_rec_results"
-                    )
-                    st.dataframe(pd.DataFrame([_mk_result_row(r) for r in page_shown]),
-                                 use_container_width=True, hide_index=True,
-                                 height=min(420, 70 + 35 * max(1, len(page_shown))))
-                    render_pagination_bar("pg_rec_results", pg_cur, pg_total, pg_start, pg_end, pg_tot)
+                        filter_opt = st.selectbox(
+                            "Lọc theo kết quả",
+                            ["Tất cả"] + list(STATUS_LABEL.values()),
+                            key="rec_filter"
+                        )
+                        label_to_key = {v: k for k, v in STATUS_LABEL.items()}
+                        shown = results if filter_opt == "Tất cả" else [
+                            r for r in results if r["status"] == label_to_key[filter_opt]
+                        ]
 
-                    # ── Cập nhật hàng loạt trạng thái "ĐÃ KHÁM" — CHỈ cho các ca
-                    # khớp CHẮC CHẮN ở Tầng 1 (Tên+SĐT) hoặc Tầng 2 (Tên+Năm sinh
-                    # ±1). Ca "cần kiểm tra" (Tầng 3 — chỉ khớp mỗi tên) KHÔNG
-                    # tự động ghi vào Sheet — phải xác nhận tay ở mục riêng bên dưới.
-                    confirmable = [r for r in results if r["status"] == "attended_sure"]
-                    to_update = [
-                        r for r in confirmable
-                        if STATUS_ATTENDED.upper() not in str(
-                            next((p["status_now"] for p in sheet_patients if p["sheet_row"] == r["sheet_row"]), "")
-                        ).upper()
-                    ]
-
-                    st.markdown(
-                        '<div class="sh"><div class="sh-dot" style="background:#10b981"></div>'
-                        '<span class="sh-txt">📋 Bước 2 — Xem Lại Danh Sách Trước Khi Cập Nhật</span></div>',
-                        unsafe_allow_html=True
-                    )
-                    st.markdown(
-                        f'<div class="pg-info" style="text-align:left;margin:0.5rem 0 0.8rem">'
-                        f'Có <b>{len(to_update)}</b> bệnh nhân khớp CHẮC CHẮN (Tên+SĐT, hoặc Tên+Năm sinh '
-                        f'lệch tối đa 1 năm) và đang ở trạng thái khác "Đã khám" trên Sheet. '
-                        f'Nhóm "cần kiểm tra" ({nghi_ngo} ca, chỉ khớp được mỗi tên) <b>không</b> nằm trong '
-                        f'danh sách này — xem và xử lý riêng ở mục bên dưới. Kiểm tra kỹ trước khi bấm cập nhật.</div>',
-                        unsafe_allow_html=True
-                    )
-
-                    if to_update:
-                        def _mk_confirm_row(r):
+                        def _mk_result_row(r):
+                            v = r.get("visit")
                             return {
                                 "Họ tên": r["name"],
                                 "SĐT": r.get("phone", "") or "—",
@@ -3737,143 +3679,251 @@ if st.session_state.metrics:
                                 "Tuổi": r.get("age", "") or "—",
                                 "Nguồn bệnh nhân": r.get("source", "") or "—",
                                 "Ngày hẹn": r["exam_date"].strftime("%d/%m/%Y") if r["exam_date"] else "—",
-                                "Ngày thực đến": r["visit"]["NGÀY ĐK"] if r.get("visit") else "—",
-                                "Khớp qua": {1: "Tên + SĐT", 2: "Tên + Năm sinh"}.get(r.get("match_tier"), "—"),
+                                "Kết quả": STATUS_LABEL[r["status"]],
+                                "Khớp qua": {1: "Tên + SĐT", 2: "Tên + Năm sinh", 3: "Chỉ Tên"}.get(r.get("match_tier"), "—"),
+                                "Ngày thực đến": v["NGÀY ĐK"] if v else "—",
+                                "SĐT lúc khám": v.get("SỐ ĐIỆN THOẠI", "") if v else "—",
+                                "Năm sinh lúc khám": v.get("NĂM SINH", "") if v else "—",
+                                "Tuổi lúc khám": v.get("TUỔI", "") if v else "—",
+                                "Độ tin cậy": f"{r['score']:.0f}%",
+                                "Khoa thực khám": v.get("KHOA ĐK", "") if v else "—",
                             }
-                        # Nút "Cập Nhật" bên dưới luôn áp dụng cho TOÀN BỘ to_update
-                        # (không chỉ trang đang xem) — phân trang chỉ để XEM cho gọn.
-                        page_upd, upd_cur, upd_total, upd_start, upd_end, upd_tot = paginate_list(
-                            to_update, "pg_rec_confirm"
+
+                        # Bảng CSV luôn xuất TOÀN BỘ kết quả (không chỉ trang đang xem)
+                        table_rows = [_mk_result_row(r) for r in shown]
+
+                        page_shown, pg_cur, pg_total, pg_start, pg_end, pg_tot = paginate_list(
+                            shown, "pg_rec_results"
                         )
-                        st.dataframe(pd.DataFrame([_mk_confirm_row(r) for r in page_upd]),
+                        st.dataframe(pd.DataFrame([_mk_result_row(r) for r in page_shown]),
                                      use_container_width=True, hide_index=True,
-                                     height=min(360, 70 + 35 * max(1, len(page_upd))))
-                        render_pagination_bar("pg_rec_confirm", upd_cur, upd_total, upd_start, upd_end, upd_tot)
+                                     height=min(420, 70 + 35 * max(1, len(page_shown))))
+                        render_pagination_bar("pg_rec_results", pg_cur, pg_total, pg_start, pg_end, pg_tot)
 
-                        confirm_check = st.checkbox(
-                            f"✅ Tôi đã xem kỹ danh sách {len(to_update)} bệnh nhân ở trên và xác nhận "
-                            f"đúng người trước khi ghi vào Google Sheet",
-                            key="rec_confirm_check"
-                        )
-                    else:
-                        confirm_check = False
-                        st.info("Không có bệnh nhân nào đủ điều kiện cập nhật tự động ở lần đối chiếu này.")
+                        # ── Cập nhật hàng loạt trạng thái "ĐÃ KHÁM" — CHỈ cho các ca
+                        # khớp CHẮC CHẮN ở Tầng 1 (Tên+SĐT) hoặc Tầng 2 (Tên+Năm sinh
+                        # ±1). Ca "cần kiểm tra" (Tầng 3 — chỉ khớp mỗi tên) KHÔNG
+                        # tự động ghi vào Sheet — phải xác nhận tay ở mục riêng bên dưới.
+                        confirmable = [r for r in results if r["status"] == "attended_sure"]
+                        to_update = [
+                            r for r in confirmable
+                            if STATUS_ATTENDED.upper() not in str(
+                                next((p["status_now"] for p in sheet_patients if p["sheet_row"] == r["sheet_row"]), "")
+                            ).upper()
+                        ]
 
-                    bc1, bc2 = st.columns([2, 1])
-                    with bc1:
-                        if st.button(f"✅ Cập Nhật \"Đã Khám\" Cho {len(to_update)} Bệnh Nhân",
-                                     type="primary", use_container_width=True,
-                                     disabled=(len(to_update) == 0 or not confirm_check)):
-                            if not creds_data:
-                                st.error("❌ Chưa có credentials. Kiểm tra Streamlit Secrets.")
-                            else:
-                                with st.spinner(f"Đang cập nhật {len(to_update)} dòng…"):
-                                    n_ok, err_batch = update_patient_status_batch(
-                                        creds_data, SHEET_ID, SHEET_NAME,
-                                        [(r["sheet_row"], STATUS_ATTENDED) for r in to_update]
-                                    )
-                                if err_batch:
-                                    st.error(f"❌ {err_batch}")
-                                else:
-                                    st.success(f"✅ Đã cập nhật cột TRẠNG THÁI thành \"Đã khám\" cho {n_ok} bệnh nhân!")
-                                    st.session_state.metrics = None
-                                    st.session_state.pop("rec_results", None)
-                                    st.session_state.pop("rec_sheet_patients", None)
-                                    st.session_state.pop("rec_confirm_check", None)
-                                    st.balloons()
-                    with bc2:
-                        csv_rec = pd.DataFrame(table_rows).to_csv(index=False, encoding="utf-8-sig")
-                        st.download_button(
-                            "⬇️ Tải Báo Cáo (.csv)", data=csv_rec.encode("utf-8-sig"),
-                            file_name=f"doi_chieu_taikham_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
-                            mime="text/csv", use_container_width=True,
-                        )
-
-                    # ── Bước 3 — Danh sách CẦN KIỂM TRA THỦ CÔNG (Tầng 3: chỉ
-                    # khớp được mỗi cái tên, không có SĐT/năm sinh xác nhận).
-                    # Cho phép SỬA TRỰC TIẾP SĐT/Năm sinh trên Sheet (để lần đối
-                    # chiếu sau tự khớp đúng tầng 1/2), hoặc XÁC NHẬN THỦ CÔNG
-                    # ngay tại đây nếu nhìn info đã đủ chắc là đúng người.
-                    need_review = [r for r in results if r["status"] == "attended_unsure"]
-                    if need_review:
                         st.markdown(
-                            '<div class="sh"><div class="sh-dot" style="background:#f59e0b"></div>'
-                            '<span class="sh-txt">🔎 Bước 3 — Cần Kiểm Tra Thủ Công (chỉ khớp tên)</span></div>',
+                            '<div class="sh"><div class="sh-dot" style="background:#10b981"></div>'
+                            '<span class="sh-txt">📋 Bước 2 — Xem Lại Danh Sách Trước Khi Cập Nhật</span></div>',
                             unsafe_allow_html=True
                         )
-                        st.caption(
-                            f"{len(need_review)} bệnh nhân chỉ khớp được TÊN với 1 lượt khám trong log "
-                            f"(không có SĐT hoặc năm sinh để xác nhận thêm) — xem kỹ thông tin 2 bên rồi "
-                            f"chọn 1 trong 2 cách xử lý cho từng người."
+                        st.markdown(
+                            f'<div class="pg-info" style="text-align:left;margin:0.5rem 0 0.8rem">'
+                            f'Có <b>{len(to_update)}</b> bệnh nhân khớp CHẮC CHẮN (Tên+SĐT, hoặc Tên+Năm sinh '
+                            f'lệch tối đa 1 năm) và đang ở trạng thái khác "Đã khám" trên Sheet. '
+                            f'Nhóm "cần kiểm tra" ({nghi_ngo} ca, chỉ khớp được mỗi tên) <b>không</b> nằm trong '
+                            f'danh sách này — xem và xử lý riêng ở mục bên dưới. Kiểm tra kỹ trước khi bấm cập nhật.</div>',
+                            unsafe_allow_html=True
                         )
-                        page_rev, rev_cur, rev_total, rev_start, rev_end, rev_tot = paginate_list(
-                            need_review, "pg_rec_review", page_size=5
-                        )
-                        render_pagination_bar("pg_rec_review", rev_cur, rev_total, rev_start, rev_end, rev_tot,
-                                               widget_key="pg_rec_review_top")
-                        for r in page_rev:
-                            v = r.get("visit") or {}
-                            with st.expander(
-                                f"👤 {r['name']}  ·  hẹn {r['exam_date'].strftime('%d/%m/%Y') if r['exam_date'] else '—'}"
-                                f"  ·  độ giống tên {r['score']:.0f}%"
-                            ):
-                                cA, cB = st.columns(2)
-                                with cA:
-                                    st.markdown("**Trên Google Sheet**")
-                                    st.write(f"SĐT: {r.get('phone') or '—'}")
-                                    st.write(f"Năm sinh: {r.get('birth_year') or '—'}")
-                                    st.write(f"Tuổi (lúc hẹn): {r.get('age') or '—'}")
-                                    st.write(f"Nguồn: {r.get('source') or '—'}")
-                                with cB:
-                                    st.markdown("**Ứng viên khớp trong log Minh Lộ**")
-                                    st.write(f"SĐT: {v.get('SỐ ĐIỆN THOẠI') or '—'}")
-                                    st.write(f"Năm sinh: {v.get('NĂM SINH') or '—'}")
-                                    st.write(f"Tuổi: {v.get('TUỔI') or '—'}")
-                                    st.write(f"Ngày ĐK: {v.get('NGÀY ĐK') or '—'}  ·  Khoa: {v.get('KHOA ĐK') or '—'}")
 
-                                st.markdown("—")
-                                ec1, ec2 = st.columns(2)
-                                with ec1:
-                                    new_phone = st.text_input(
-                                        "Sửa SĐT trên Sheet", value=str(v.get("SỐ ĐIỆN THOẠI") or r.get("phone") or ""),
-                                        key=f"edit_phone_{r['sheet_row']}"
-                                    )
-                                with ec2:
-                                    new_birth = st.text_input(
-                                        "Sửa Năm sinh trên Sheet", value=str(v.get("NĂM SINH") or r.get("birth_year") or ""),
-                                        key=f"edit_birth_{r['sheet_row']}"
-                                    )
-                                bA, bB = st.columns(2)
-                                with bA:
-                                    if st.button("💾 Lưu SĐT/Năm sinh vào Sheet", key=f"save_info_{r['sheet_row']}",
-                                                 use_container_width=True):
-                                        if not creds_data:
-                                            st.error("❌ Chưa có credentials.")
-                                        else:
-                                            ok, err_f = update_patient_fields(
-                                                creds_data, SHEET_ID, SHEET_NAME, r["sheet_row"],
-                                                {COL_PHONE: new_phone, COL_BIRTH_YEAR: new_birth}
-                                            )
-                                            if ok:
-                                                st.success("✅ Đã lưu — lần đối chiếu sau sẽ tự khớp đúng hơn.")
+                        if to_update:
+                            def _mk_confirm_row(r):
+                                return {
+                                    "Họ tên": r["name"],
+                                    "SĐT": r.get("phone", "") or "—",
+                                    "Năm sinh": r.get("birth_year", "") or "—",
+                                    "Tuổi": r.get("age", "") or "—",
+                                    "Nguồn bệnh nhân": r.get("source", "") or "—",
+                                    "Ngày hẹn": r["exam_date"].strftime("%d/%m/%Y") if r["exam_date"] else "—",
+                                    "Ngày thực đến": r["visit"]["NGÀY ĐK"] if r.get("visit") else "—",
+                                    "Khớp qua": {1: "Tên + SĐT", 2: "Tên + Năm sinh"}.get(r.get("match_tier"), "—"),
+                                }
+                            # Nút "Cập Nhật" bên dưới luôn áp dụng cho TOÀN BỘ to_update
+                            # (không chỉ trang đang xem) — phân trang chỉ để XEM cho gọn.
+                            page_upd, upd_cur, upd_total, upd_start, upd_end, upd_tot = paginate_list(
+                                to_update, "pg_rec_confirm"
+                            )
+                            st.dataframe(pd.DataFrame([_mk_confirm_row(r) for r in page_upd]),
+                                         use_container_width=True, hide_index=True,
+                                         height=min(360, 70 + 35 * max(1, len(page_upd))))
+                            render_pagination_bar("pg_rec_confirm", upd_cur, upd_total, upd_start, upd_end, upd_tot)
+
+                            confirm_check = st.checkbox(
+                                f"✅ Tôi đã xem kỹ danh sách {len(to_update)} bệnh nhân ở trên và xác nhận "
+                                f"đúng người trước khi ghi vào Google Sheet",
+                                key="rec_confirm_check"
+                            )
+                        else:
+                            confirm_check = False
+                            st.info("Không có bệnh nhân nào đủ điều kiện cập nhật tự động ở lần đối chiếu này.")
+
+                        bc1, bc2 = st.columns([2, 1])
+                        with bc1:
+                            if st.button(f"✅ Cập Nhật \"Đã Khám\" Cho {len(to_update)} Bệnh Nhân",
+                                         type="primary", use_container_width=True,
+                                         disabled=(len(to_update) == 0 or not confirm_check)):
+                                if not creds_data:
+                                    st.error("❌ Chưa có credentials. Kiểm tra Streamlit Secrets.")
+                                else:
+                                    with st.spinner(f"Đang cập nhật {len(to_update)} dòng…"):
+                                        n_ok, err_batch = update_patient_status_batch(
+                                            creds_data, SHEET_ID, SHEET_NAME,
+                                            [(r["sheet_row"], STATUS_ATTENDED) for r in to_update]
+                                        )
+                                    if err_batch:
+                                        st.error(f"❌ {err_batch}")
+                                    else:
+                                        st.success(f"✅ Đã cập nhật cột TRẠNG THÁI thành \"Đã khám\" cho {n_ok} bệnh nhân!")
+                                        st.session_state.metrics = None
+                                        st.session_state.pop("rec_results", None)
+                                        st.session_state.pop("rec_sheet_patients", None)
+                                        st.session_state.pop("rec_confirm_check", None)
+                                        st.balloons()
+                        with bc2:
+                            csv_rec = pd.DataFrame(table_rows).to_csv(index=False, encoding="utf-8-sig")
+                            st.download_button(
+                                "⬇️ Tải Báo Cáo (.csv)", data=csv_rec.encode("utf-8-sig"),
+                                file_name=f"doi_chieu_taikham_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
+                                mime="text/csv", use_container_width=True,
+                            )
+
+                        # ── Bước 3 — Danh sách CẦN KIỂM TRA THỦ CÔNG (Tầng 3: chỉ
+                        # khớp được mỗi cái tên, không có SĐT/năm sinh xác nhận).
+                        # Cho phép SỬA TRỰC TIẾP SĐT/Năm sinh trên Sheet (để lần đối
+                        # chiếu sau tự khớp đúng tầng 1/2), hoặc XÁC NHẬN THỦ CÔNG
+                        # ngay tại đây nếu nhìn info đã đủ chắc là đúng người.
+                        need_review = [r for r in results if r["status"] == "attended_unsure"]
+                        if need_review:
+                            st.markdown(
+                                '<div class="sh"><div class="sh-dot" style="background:#f59e0b"></div>'
+                                '<span class="sh-txt">🔎 Bước 3 — Cần Kiểm Tra Thủ Công (chỉ khớp tên)</span></div>',
+                                unsafe_allow_html=True
+                            )
+                            st.caption(
+                                f"{len(need_review)} bệnh nhân chỉ khớp được TÊN với 1 lượt khám trong log "
+                                f"(không có SĐT hoặc năm sinh để xác nhận thêm) — xem kỹ thông tin 2 bên rồi "
+                                f"chọn 1 trong 2 cách xử lý cho từng người."
+                            )
+                            page_rev, rev_cur, rev_total, rev_start, rev_end, rev_tot = paginate_list(
+                                need_review, "pg_rec_review", page_size=5
+                            )
+                            render_pagination_bar("pg_rec_review", rev_cur, rev_total, rev_start, rev_end, rev_tot,
+                                                   widget_key="pg_rec_review_top")
+                            for r in page_rev:
+                                v = r.get("visit") or {}
+                                with st.expander(
+                                    f"👤 {r['name']}  ·  hẹn {r['exam_date'].strftime('%d/%m/%Y') if r['exam_date'] else '—'}"
+                                    f"  ·  độ giống tên {r['score']:.0f}%"
+                                ):
+                                    cA, cB = st.columns(2)
+                                    with cA:
+                                        st.markdown("**Trên Google Sheet**")
+                                        st.write(f"SĐT: {r.get('phone') or '—'}")
+                                        st.write(f"Năm sinh: {r.get('birth_year') or '—'}")
+                                        st.write(f"Tuổi (lúc hẹn): {r.get('age') or '—'}")
+                                        st.write(f"Nguồn: {r.get('source') or '—'}")
+                                    with cB:
+                                        st.markdown("**Ứng viên khớp trong log Minh Lộ**")
+                                        st.write(f"SĐT: {v.get('SỐ ĐIỆN THOẠI') or '—'}")
+                                        st.write(f"Năm sinh: {v.get('NĂM SINH') or '—'}")
+                                        st.write(f"Tuổi: {v.get('TUỔI') or '—'}")
+                                        st.write(f"Ngày ĐK: {v.get('NGÀY ĐK') or '—'}  ·  Khoa: {v.get('KHOA ĐK') or '—'}")
+
+                                    st.markdown("—")
+                                    ec1, ec2 = st.columns(2)
+                                    with ec1:
+                                        new_phone = st.text_input(
+                                            "Sửa SĐT trên Sheet", value=str(v.get("SỐ ĐIỆN THOẠI") or r.get("phone") or ""),
+                                            key=f"edit_phone_{r['sheet_row']}"
+                                        )
+                                    with ec2:
+                                        new_birth = st.text_input(
+                                            "Sửa Năm sinh trên Sheet", value=str(v.get("NĂM SINH") or r.get("birth_year") or ""),
+                                            key=f"edit_birth_{r['sheet_row']}"
+                                        )
+                                    bA, bB = st.columns(2)
+                                    with bA:
+                                        if st.button("💾 Lưu SĐT/Năm sinh vào Sheet", key=f"save_info_{r['sheet_row']}",
+                                                     use_container_width=True):
+                                            if not creds_data:
+                                                st.error("❌ Chưa có credentials.")
                                             else:
-                                                st.error(f"❌ {err_f}")
-                                with bB:
-                                    if st.button("✅ Xác nhận đây đúng — đánh dấu Đã khám", key=f"confirm_att_{r['sheet_row']}",
-                                                 use_container_width=True, type="primary"):
-                                        if not creds_data:
-                                            st.error("❌ Chưa có credentials.")
-                                        else:
-                                            n_ok2, err2 = update_patient_status_batch(
-                                                creds_data, SHEET_ID, SHEET_NAME, [(r["sheet_row"], STATUS_ATTENDED)]
-                                            )
-                                            if err2:
-                                                st.error(f"❌ {err2}")
+                                                ok, err_f = update_patient_fields(
+                                                    creds_data, SHEET_ID, SHEET_NAME, r["sheet_row"],
+                                                    {COL_PHONE: new_phone, COL_BIRTH_YEAR: new_birth}
+                                                )
+                                                if ok:
+                                                    st.success("✅ Đã lưu — lần đối chiếu sau sẽ tự khớp đúng hơn.")
+                                                else:
+                                                    st.error(f"❌ {err_f}")
+                                    with bB:
+                                        if st.button("✅ Xác nhận đây đúng — đánh dấu Đã khám", key=f"confirm_att_{r['sheet_row']}",
+                                                     use_container_width=True, type="primary"):
+                                            if not creds_data:
+                                                st.error("❌ Chưa có credentials.")
                                             else:
-                                                st.success("✅ Đã đánh dấu Đã khám cho bệnh nhân này.")
-                                                st.session_state.metrics = None
-                        render_pagination_bar("pg_rec_review", rev_cur, rev_total, rev_start, rev_end, rev_tot,
-                                               widget_key="pg_rec_review_bottom")
+                                                n_ok2, err2 = update_patient_status_batch(
+                                                    creds_data, SHEET_ID, SHEET_NAME, [(r["sheet_row"], STATUS_ATTENDED)]
+                                                )
+                                                if err2:
+                                                    st.error(f"❌ {err2}")
+                                                else:
+                                                    st.success("✅ Đã đánh dấu Đã khám cho bệnh nhân này.")
+                                                    st.session_state.metrics = None
+                            render_pagination_bar("pg_rec_review", rev_cur, rev_total, rev_start, rev_end, rev_tot,
+                                                   widget_key="pg_rec_review_bottom")
+
+        with gtab_vl:
+            st.markdown("""
+            <div style="background:#fff7ed;border:1px solid #fed7aa;border-radius:12px;
+                        padding:1rem 1.2rem;margin-bottom:1rem;font-size:0.83rem;color:#9a3412">
+              <b>📝 Check thủ công — Bệnh Nhân Vãng Lai</b><br>
+              Bệnh nhân vãng lai không có lịch hẹn cố định nên không đối chiếu bằng thuật toán được —
+              chọn khoảng ngày bên dưới rồi bấm <b>✏️</b> ở từng người để đánh dấu
+              <b>Đã khám</b> / <b>Chưa khám</b> trực tiếp.
+            </div>
+            """, unsafe_allow_html=True)
+
+            vl_c1, vl_c2, vl_c3 = st.columns([1, 1, 1.3])
+            with vl_c1:
+                vl_from = st.date_input(
+                    "Từ ngày", value=today - timedelta(days=RECONCILE_LOOKBACK_DAYS), key="vl_checkin_from"
+                )
+            with vl_c2:
+                vl_to = st.date_input("Đến ngày", value=today, key="vl_checkin_to")
+            with vl_c3:
+                vl_only_pending = st.checkbox(
+                    "Chỉ hiện bệnh nhân CHƯA khám", value=True, key="vl_checkin_only_pending"
+                )
+
+            if vl_from > vl_to:
+                st.warning('⚠️ "Từ ngày" đang sau "Đến ngày" — đổi lại giúp tao nhé.')
+            else:
+                vl_full_src = m.get("df_full", df)
+                vl_mask = (
+                    vl_full_src["_date"].notna()
+                    & (vl_full_src["_date"].dt.date >= vl_from)
+                    & (vl_full_src["_date"].dt.date <= vl_to)
+                    & (vl_full_src[COL_SOURCE].astype(str)
+                         .str.contains("vãng lai|vang lai|ngoài|ngoai", case=False, na=False))
+                )
+                if vl_only_pending:
+                    vl_mask &= (~vl_full_src[COL_STATUS].astype(str).str.upper()
+                                  .str.contains(STATUS_ATTENDED.upper(), na=False))
+                vl_scope_df = vl_full_src[vl_mask]
+
+                st.caption(
+                    f"**{len(vl_scope_df)}** bệnh nhân vãng lai trong khoảng ngày đã chọn"
+                    + (" (đang CHƯA khám)." if vl_only_pending else ".")
+                )
+
+                render_upcoming_table(
+                    vl_scope_df,
+                    empty_msg="Không có bệnh nhân vãng lai nào trong khoảng ngày này.",
+                    dl_prefix="vang_lai_checkin",
+                    dl_key="dl_vl_checkin",
+                    page_state_key="pg_vl_checkin",
+                )
 
 
 
