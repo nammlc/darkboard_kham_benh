@@ -1646,6 +1646,48 @@ def _name_similarity(a, b):
     return difflib.SequenceMatcher(None, a, b).ratio()
 
 
+def _name_match_ok(a, b, min_ratio):
+    """
+    Xét 2 tên có nên coi là CÙNG 1 NGƯỜI hay không — chặt hơn hẳn so với
+    chỉ dùng độ giống ký tự toàn chuỗi (_name_similarity), vốn dễ khớp
+    NHẦM giữa những bệnh nhân KHÁC NHAU khi tên tiếng Việt trùng nhiều từ
+    đệm phổ biến. Ví dụ thực tế đã gặp — 4 người HOÀN TOÀN KHÁC NHAU bị
+    lẫn vào nhau: "NGUYỄN THỊ ANH", "LÊ THỊ HOÀN", "NGUYỄN THỊ HOAN",
+    "NGUYỄN THỊ VÂN" — vì cùng cấu trúc "X THỊ Y" nên tỉ lệ ký tự trùng
+    tổng thể vẫn có thể vượt ngưỡng dù rõ ràng là 2 người khác nhau.
+
+    QUY TẮC: coi là CÙNG 1 NGƯỜI chỉ khi:
+      1. Từ ĐẦU (họ) và từ CUỐI (tên gọi — phần phân biệt rõ nhất giữa
+         những người Việt khác nhau, kể cả cùng họ) khớp CHÍNH XÁC sau khi
+         đã chuẩn hoá (bỏ dấu, viết hoa) — bắt buộc, không có ngoại lệ.
+         KHÔNG dùng độ giống ký tự cho phần này vì "ANH"/"HOAN"/"VÂN" tuy
+         ngắn nhưng là đúng chỗ khác nhau giữa các người, càng giống ký tự
+         xét lẫn lộn càng dễ khớp nhầm.
+      2. VÀ độ giống ký tự toàn chuỗi (đã tính cả từ đệm ở giữa, để bắt lỗi
+         gõ/chính tả nhẹ trong từ đệm) đạt tối thiểu `min_ratio`.
+
+    Trả về (đạt: bool, tỉ lệ giống toàn chuỗi: float 0.0–1.0).
+    """
+    na, nb = _norm_name(a), _norm_name(b)
+    if not na or not nb:
+        return False, 0.0
+    if na == nb:
+        return True, 1.0
+
+    ta, tb = na.split(), nb.split()
+    if not ta or not tb:
+        return False, 0.0
+    if ta[0] != tb[0] or ta[-1] != tb[-1]:
+        # Khác họ hoặc khác tên gọi → chắc chắn KHÔNG cùng 1 người, bất kể
+        # độ giống ký tự tổng thể cao đến đâu (thường cao giả tạo do trùng
+        # từ đệm như "THỊ"/"VĂN").
+        return False, _name_similarity(a, b)
+
+    import difflib
+    ratio = difflib.SequenceMatcher(None, na, nb).ratio()
+    return ratio >= min_ratio, ratio
+
+
 def _parse_ddmmyyyy(s):
     try:
         return datetime.strptime(str(s).strip(), "%d/%m/%Y").date()
@@ -1763,8 +1805,14 @@ def reconcile_attendance(sheet_patients, visit_records,
             "visit": None, "score": 0.0, "match_tier": None,
         }
 
-        # Cache độ giống tên cho từng ứng viên (tính 1 lần, dùng lại cả 3 tầng)
-        name_sims = [(_name_similarity(p_name, v.get("HỌ TÊN")), v) for v in candidates]
+        # Cache độ giống tên cho từng ứng viên (tính 1 lần, dùng lại cả 3 tầng).
+        # Chỉ giữ lại ứng viên ĐẠT gate họ+tên gọi (xem _name_match_ok) — loại
+        # ngay từ đây những tên "trông giống" nhưng thực chất khác người.
+        name_sims = []
+        for v in candidates:
+            ok, ratio = _name_match_ok(p_name, v.get("HỌ TÊN"), NAME_RATIO_MIN)
+            if ok:
+                name_sims.append((ratio, v))
 
         # ── TẦNG 1 — Tên + SĐT (bắt buộc cả 2) ──────────────────
         best1 = None
