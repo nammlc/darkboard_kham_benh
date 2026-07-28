@@ -1453,8 +1453,17 @@ def update_patient_status_batch(creds_data, sheet_id, sheet_name, updates):
 # ═══════════════════════════════════════════════════════════════
 
 def _norm_name(s):
-    """Chuẩn hoá tên để so khớp: gộp khoảng trắng thừa, viết hoa toàn bộ."""
-    return re.sub(r"\s+", " ", str(s or "").strip()).upper()
+    """Chuẩn hoá tên để so khớp:
+    1. Thay chữ Đ/đ đặc thù tiếng Việt (không bỏ dấu được qua NFKD).
+    2. NFKD + bỏ combining marks → ASCII base.
+    3. Gộp khoảng trắng thừa, viết hoa.
+    Kết quả: 'Lê Hoàng Phúc'→'LE HOANG PHUC', 'Đỗ Văn An'→'DO VAN AN'.
+    """
+    import unicodedata as _ud
+    s2 = str(s or "").replace("Đ", "D").replace("đ", "d")
+    s2 = _ud.normalize("NFKD", s2)
+    s2 = "".join(c for c in s2 if not _ud.combining(c))
+    return re.sub(r"\s+", " ", s2.strip()).upper()
 
 
 def _norm_phone_key(s):
@@ -1538,24 +1547,26 @@ def reconcile_attendance(sheet_patients, visit_records,
       ngày 27/7 — trong khi thực ra họ CHƯA quay lại. Cửa sổ hẹp + chặn ở
       hôm nay giải quyết đúng vấn đề này.
 
-    THUẬT TOÁN so khớp ĐÚNG NGƯỜI — SỐ ĐIỆN THOẠI TRƯỚC, THIẾU MỚI XÉT
-    TÊN + TUỔI + NĂM SINH (chỉ xét trong số các lượt khám thực tế đã lọc
-    theo cửa sổ ngày ở trên):
-      1. Nếu bệnh nhân CÓ số điện thoại hợp lệ trên Sheet → CHỈ so khớp
-         bằng số điện thoại (đã chuẩn hoá). Khớp đúng → CHẮC CHẮN đã đến.
-         Không khớp được (dù có SĐT) → coi là CHƯA ĐẾN — không rơi xuống
-         so tên, vì SĐT là tín hiệu đáng tin nhất khi đã có sẵn.
-      2. Nếu bệnh nhân KHÔNG CÓ số điện thoại (trống/thiếu) → chuyển sang
-         chấm điểm dự phòng bằng TÊN + TUỔI + NĂM SINH:
-           · Độ giống tên (difflib ratio 0..1) × 55   → tối đa +55 điểm
-           · Năm sinh trùng khớp chính xác             → +15 điểm
-           · Năm sinh lệch đúng 1 (ước tính từ tuổi)    → +7 điểm
-           · Tuổi trùng khớp chính xác                  → +10 điểm
-           · Tuổi lệch đúng 1 (sai số theo thời gian)    → +5 điểm
-         ≥ 70 điểm → khớp CHẮC CHẮN (đủ mạnh để tự kết luận, không cần
-           xác nhận tay — vd tên khớp tuyệt đối + năm sinh khớp = 70đ)
-         45-69 điểm → khớp NGHI NGỜ, cần người dùng xác nhận tay
-         < 45 điểm hoặc không có ứng viên nào trong cửa sổ → CHƯA ĐẾN KHÁM
+    THUẬT TOÁN so khớp ĐÚNG NGƯỜI — 3 TẦNG, ưu tiên theo thứ tự:
+
+      TẦNG 1 — Họ tên + SĐT:
+        · SĐT khớp → attended_sure (score 100), bất kể tên viết thế nào.
+        · SĐT có nhưng không khớp ai → FALLTHROUGH xuống Tầng 2
+          (SĐT hay bị nhập sai/thiếu số 0 khi lên sheet, không nên chặn).
+
+      TẦNG 2 — Họ tên + tuổi + năm sinh (±1):
+        Chấm điểm từng ứng viên trong cửa sổ ngày:
+          · Tên (difflib sau bỏ dấu) × 55      → tối đa 55đ
+          · Năm sinh trùng chính xác            → +20đ
+          · Năm sinh lệch ±1                    → +10đ
+          · Tuổi trùng chính xác                → +15đ
+          · Tuổi lệch ±1                        → +7đ
+        ≥ 75đ → attended_sure | 55-74đ → attended_unsure
+
+      TẦNG 3 — Họ tên + năm sinh (±1), không có tuổi:
+        (Chỉ chạy khi Tầng 2 không ra kết quả)
+          · Tên × 55 + năm sinh exact +20 / ±1 +10
+        ≥ 70đ → attended_sure | 45-69đ → attended_unsure
 
     sheet_patients: list dict {"sheet_row","name","phone","birth_year","age","exam_date","source"}
     visit_records:  list dict từ parse_minh_lo_visit_log()
@@ -1606,57 +1617,114 @@ def reconcile_attendance(sheet_patients, visit_records,
             "visit": None, "score": 0.0,
         }
 
-        # ── Tầng 1 — CÓ số điện thoại → chỉ so khớp bằng SĐT, không xét tên ──
+        # ════════════════════════════════════════════════════════
+        # THUẬT TOÁN SO KHỚP — 3 TẦNG, ƯU TIÊN THEO THỨ TỰ:
+        #
+        # TẦNG 1: Họ tên + SĐT
+        #   → Khớp cả hai → attended_sure (score 100)
+        #   → Chỉ khớp SĐT (tên rất khác) → attended_sure (score 95)
+        #     vì SĐT là định danh đáng tin nhất
+        #   → Có SĐT nhưng không khớp ai → fallback xuống Tầng 2
+        #     (SĐT trong sheet hay bị nhập sai → không nên chặn ở đây)
+        #
+        # TẦNG 2: Họ tên + tuổi + năm sinh (±1)
+        #   Chấm điểm từng ứng viên trong cửa sổ ngày:
+        #     · Tên (difflib sau khi bỏ dấu) × 55   → tối đa 55đ
+        #     · Năm sinh trùng chính xác             → +20đ
+        #     · Năm sinh lệch ±1                     → +10đ
+        #     · Tuổi trùng chính xác                 → +15đ
+        #     · Tuổi lệch ±1                         → +7đ
+        #   ≥ 75đ → attended_sure  (tên + năm sinh + tuổi đều khớp)
+        #   55-74đ → attended_unsure (tên khớp nhưng thiếu thêm 1 trường)
+        #
+        # TẦNG 3: Họ tên + năm sinh (±1) — không có tuổi trên Sheet
+        #   Như Tầng 2 nhưng bỏ điểm tuổi:
+        #     · Tên × 55 + năm sinh exact +20 / ±1 +10
+        #   ≥ 70đ → attended_sure; 45-69đ → attended_unsure
+        # ════════════════════════════════════════════════════════
+
+        # ── Tầng 1 — Họ tên + SĐT ──────────────────────────────
         if p_phone_key:
-            matched_visit = None
+            phone_match = None
             for v in candidates:
                 if _norm_phone_key(v.get("SỐ ĐIỆN THOẠI")) == p_phone_key:
-                    matched_visit = v
+                    phone_match = v
                     break
-            if matched_visit is not None:
-                entry["visit"] = matched_visit
+
+            if phone_match is not None:
+                # SĐT khớp → chắc chắn đúng người, bất kể tên viết thế nào
+                entry["visit"] = phone_match
                 entry["score"] = 100.0
                 entry["status"] = "attended_sure"
-            else:
-                entry["status"] = "not_attended"
-            results.append(entry)
-            continue
+                results.append(entry)
+                continue
+            # SĐT có nhưng không khớp ai → KHÔNG dừng, fallthrough Tầng 2
+            # (SĐT hay bị nhập sai/thiếu số 0 → tiếp tục so tên+năm sinh)
 
-        # ── Tầng 2 — KHÔNG có SĐT → chấm điểm dự phòng: tên + tuổi + năm sinh ──
+        # ── Tầng 2 — Tên + tuổi + năm sinh (±1) ────────────────
         best, best_score = None, 0.0
         for v in candidates:
-            score = _name_similarity(p_name, v.get("HỌ TÊN")) * 55
+            name_ratio = _name_similarity(p_name, v.get("HỌ TÊN"))
+            score = name_ratio * 55  # tối đa 55đ
+
+            # Năm sinh
             try:
                 v_birth = int(str(v.get("NĂM SINH", "")).strip())
             except Exception:
                 v_birth = None
             if p_birth and v_birth:
                 if v_birth == p_birth:
-                    score += 15
+                    score += 20          # khớp chính xác
                 elif abs(v_birth - p_birth) == 1:
-                    score += 7
+                    score += 10          # lệch ±1 (ước tính từ tuổi có thể sai 1 năm)
+
+            # Tuổi
             v_age = _parse_age(v.get("TUỔI"))
             if p_age is not None and v_age is not None:
                 if v_age == p_age:
-                    score += 10
+                    score += 15          # khớp chính xác
                 elif abs(v_age - p_age) == 1:
-                    score += 5
+                    score += 7           # lệch ±1
+
             if score > best_score:
                 best, best_score = v, score
 
         entry["score"] = round(best_score, 1)
-        if best is not None and best_score >= 70:
-            # Tên gần như khớp tuyệt đối (difflib ratio ~1.0) VÀ năm sinh
-            # khớp chính xác — đủ chắc chắn để coi là "đã đến", không cần
-            # người dùng xác nhận tay (chỉ đạt mốc này khi CẢ 2 điều kiện
-            # cùng đúng, vd tên khớp 100% một mình chỉ được 55đ < 70).
+        if best is not None and best_score >= 75:
             entry["visit"] = best
             entry["status"] = "attended_sure"
-        elif best is not None and best_score >= 45:
+        elif best is not None and best_score >= 55:
             entry["visit"] = best
             entry["status"] = "attended_unsure"
         else:
-            entry["status"] = "not_attended"
+            # ── Tầng 3 — Tên + năm sinh (±1), không có tuổi ────
+            # Chạy lại với bộ điểm đơn giản hơn khi p_age là None
+            # (bệnh nhân trên Sheet không có cột TUỔI)
+            best3, best3_score = None, 0.0
+            for v in candidates:
+                name_ratio = _name_similarity(p_name, v.get("HỌ TÊN"))
+                score3 = name_ratio * 55
+                try:
+                    v_birth = int(str(v.get("NĂM SINH", "")).strip())
+                except Exception:
+                    v_birth = None
+                if p_birth and v_birth:
+                    if v_birth == p_birth:
+                        score3 += 20
+                    elif abs(v_birth - p_birth) == 1:
+                        score3 += 10
+                if score3 > best3_score:
+                    best3, best3_score = v, score3
+
+            entry["score"] = round(best3_score, 1)
+            if best3 is not None and best3_score >= 70:
+                entry["visit"] = best3
+                entry["status"] = "attended_sure"
+            elif best3 is not None and best3_score >= 45:
+                entry["visit"] = best3
+                entry["status"] = "attended_unsure"
+            else:
+                entry["status"] = "not_attended"
 
         results.append(entry)
 
