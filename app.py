@@ -29,6 +29,7 @@ COL_EXAM_TIME   = "GIỜ KHÁM DỰ KIẾN"
 COL_KHOA        = "KHOA KHÁM CHỮA BỆNH"
 COL_AGE         = "TUỔI"
 COL_CCCD        = "4. SỐ CĂN CƯỚC CÔNG DÂN - CHỨNG MINH THƯ"
+COL_STT         = "STT"  # khoá chính người dùng tự thêm — ổn định dù dòng bị thêm/xoá/sắp xếp lại
 STATUS_ATTENDED     = "BỆNH NHÂN ĐÃ KHÁM"
 STATUS_NOT_ATTENDED = "BỆNH NHÂN CHƯA KHÁM / BỎ KHÁM"
 SCOPES = [
@@ -917,6 +918,44 @@ def _xlsx_serial_to_date_str(val):
     return None
 
 
+def _parse_minhlo_date(val):
+    """Đọc 1 ô ngày trong file Minh Lộ → chuỗi 'dd/mm/yyyy', chấp nhận CẢ 2
+    kiểu dữ liệu Minh Lộ có thể xuất ra (tuỳ máy/tuỳ lần xuất báo cáo):
+
+      1. Số serial Excel (ô định dạng SỐ)      → _xlsx_serial_to_date_str
+      2. Chữ đã format sẵn (ô định dạng TEXT)  → thử lần lượt vài kiểu phổ
+         biến: dd/mm/yyyy, d/m/yyyy, dd-mm-yyyy, yyyy-mm-dd, kể cả khi có
+         giờ đính kèm (vd "03/06/2026 07:30:00" → vẫn lấy đúng phần ngày).
+
+    QUAN TRỌNG: bản cũ CHỈ hiểu dạng số — nếu ô là chữ thì bị bỏ qua ÂM
+    THẦM (trả về rỗng), khiến bệnh nhân đó biến mất khỏi toàn bộ cửa sổ so
+    khớp trong reconcile_attendance (tưởng nhầm là chưa đến khám dù có
+    trong file). Đây là nguyên nhân chính gây "check không thấy tên" /
+    "lệch ngày" đã gặp trên dữ liệu thực tế.
+
+    Trả về (date_str hoặc "", đã_đọc_được: bool) — cờ thứ 2 để phân biệt
+    "ô trống thật sự" (không phải lỗi) với "có giá trị nhưng đọc lỗi".
+    """
+    raw = str(val).strip()
+    if not raw:
+        return "", True  # ô trống — không phải lỗi đọc
+
+    serial = _xlsx_serial_to_date_str(raw)
+    if serial:
+        return serial, True
+
+    # Cắt bỏ phần giờ nếu có (vd "03/06/2026 07:30:00" hoặc "03/06/2026 7:30")
+    date_part = re.split(r"\s+", raw, maxsplit=1)[0]
+
+    for fmt in ("%d/%m/%Y", "%d-%m-%Y", "%Y-%m-%d", "%Y/%m/%d", "%d.%m.%Y"):
+        try:
+            return datetime.strptime(date_part, fmt).strftime("%d/%m/%Y"), True
+        except Exception:
+            continue
+
+    return "", False  # có giá trị nhưng không đọc được kiểu nào — LỖI THẬT
+
+
 def parse_minh_lo_excel(uploaded_file):
     """
     Parse Minh Lo HIS Excel export ("Danh sách bệnh nhân hẹn khám lại").
@@ -1141,11 +1180,14 @@ def parse_minh_lo_visit_log(uploaded_file):
     CHÍNH XÁC — không phải ước tính từ tuổi), Giới tính, Địa chỉ, Số CMND,
     Ngày ĐK (ngày thực đến khám), Khoa ĐK, Điện thoại, Mã thẻ BHYT.
 
-    Returns (list_of_dicts, error_msg_or_None).
+    Returns (list_of_dicts, error_msg_or_None, warning_msg_or_None).
+    error_msg   = lỗi khiến KHÔNG đọc được file (dừng hẳn, data_rows luôn rỗng).
+    warning_msg = vẫn đọc được file, nhưng có N dòng bị lỗi ngày cụ thể — vẫn
+    trả về đủ data_rows, chỉ cảnh báo để biết mà kiểm tra thủ công riêng.
     """
     grid, max_row, max_col, get_row, err = _load_xlsx_grid(uploaded_file)
     if err:
-        return [], err
+        return [], err, None
 
     try:
         # ── Tìm dòng tiêu đề: chứa cả "Mã BN" và "Ngày ĐK" ──
@@ -1160,7 +1202,7 @@ def parse_minh_lo_visit_log(uploaded_file):
 
         if header_row_idx is None:
             return [], ("Không tìm thấy hàng tiêu đề \"Mã BN\" / \"Ngày ĐK\". "
-                        "Kiểm tra đúng loại báo cáo \"ĐK Khám Chữa Bệnh\" của Minh Lộ.")
+                        "Kiểm tra đúng loại báo cáo \"ĐK Khám Chữa Bệnh\" của Minh Lộ."), None
 
         headers = [str(v).strip().replace("\n", " ").lower() for v in get_row(header_row_idx)]
 
@@ -1199,6 +1241,7 @@ def parse_minh_lo_visit_log(uploaded_file):
             return str(row_vals[i]).strip()
 
         data_rows = []
+        n_bad_date = 0
         for r in range(header_row_idx + 1, max_row + 1):
             row_vals = get_row(r)
             ho_ten = cv(row_vals, "ho_ten")
@@ -1206,9 +1249,11 @@ def parse_minh_lo_visit_log(uploaded_file):
                 continue  # bỏ dòng trống / dòng không phải dữ liệu bệnh nhân
 
             ngay_sinh_raw = cv(row_vals, "ngay_sinh")
-            ngay_sinh = _xlsx_serial_to_date_str(ngay_sinh_raw) or ""
+            ngay_sinh, _ = _parse_minhlo_date(ngay_sinh_raw)
             ngay_dk_raw = cv(row_vals, "ngay_dk")
-            ngay_dk = _xlsx_serial_to_date_str(ngay_dk_raw) or ""
+            ngay_dk, dk_ok = _parse_minhlo_date(ngay_dk_raw)
+            if not dk_ok:
+                n_bad_date += 1
 
             dia_chi = cv(row_vals, "dia_chi") or " ".join(
                 p for p in [cv(row_vals, "xa"), cv(row_vals, "huyen")] if p
@@ -1231,10 +1276,13 @@ def parse_minh_lo_visit_log(uploaded_file):
                 "SỐ BHYT":      cv(row_vals, "bhyt"),
             })
 
-        return data_rows, None
+        warn = (f"⚠️ {n_bad_date} dòng trong file không đọc được NGÀY ĐK (định dạng lạ) — "
+                f"những dòng này sẽ KHÔNG đối chiếu được, cần kiểm tra thủ công."
+                if n_bad_date > 0 else None)
+        return data_rows, None, warn
 
     except Exception as e:
-        return [], f"Lỗi đọc file: {type(e).__name__}: {e}"
+        return [], f"Lỗi đọc file: {type(e).__name__}: {e}", None
 
 # Danh sách cột "mặc định" — chỉ dùng làm PHƯƠNG ÁN DỰ PHÒNG nếu vì lý do
 # nào đó không đọc được dòng tiêu đề thực tế trên Google Sheet (xem push_to_sheet).
@@ -1376,12 +1424,45 @@ def push_to_sheet(creds_data, sheet_id, sheet_name, records):
         return 0, f"Lỗi ghi Sheet: {type(e).__name__}: {e}"
 
 
-def update_patient_status(creds_data, sheet_id, sheet_name, sheet_row, new_status):
+def _resolve_row_by_stt(ws, headers, stt):
     """
-    Cập nhật cột TRẠNG THÁI cho 1 bệnh nhân, xác định theo SỐ DÒNG THỰC TẾ
-    trên Google Sheet (sheet_row, tính cả dòng tiêu đề — dòng dữ liệu đầu
-    tiên là dòng 2). Chỉ ghi đúng 1 ô, không đụng tới các cột khác.
-    Trả về (thành_công: bool, lỗi: str | None).
+    Tra ra SỐ DÒNG THỰC TẾ trên Google Sheet ứng với 1 giá trị STT (khoá
+    chính, cột do người dùng tự thêm để đánh số ổn định cho từng bệnh nhân
+    — không đổi dù dòng bị thêm/xoá/sắp xếp lại).
+
+    Đọc TRỰC TIẾP từ Sheet ngay tại thời điểm ghi (không dùng lại vị trí
+    dòng đã cache từ lúc tải dữ liệu trước đó) — đây là điểm mấu chốt để
+    tránh ghi nhầm sang bệnh nhân khác nếu Sheet đã bị chỉnh sửa (thêm/xoá
+    dòng, sắp xếp lại) trong khoảng thời gian giữa lúc tải dữ liệu và lúc
+    bấm cập nhật.
+
+    Trả về (sheet_row: int | None, err: str | None).
+    """
+    if COL_STT not in headers:
+        return None, f"Không tìm thấy cột '{COL_STT}' trên Google Sheet."
+    stt_str = str(stt).strip()
+    if not stt_str:
+        return None, "Thiếu giá trị STT để tra dòng."
+    col_idx = headers.index(COL_STT) + 1
+    col_vals = ws.col_values(col_idx)  # bao gồm cả dòng tiêu đề ở vị trí 0
+    for i, v in enumerate(col_vals):
+        if i == 0:
+            continue  # bỏ qua dòng tiêu đề
+        if str(v).strip() == stt_str:
+            return i + 1, None  # gspread dùng chỉ số dòng 1-based
+    return None, f"Không tìm thấy bệnh nhân có STT = {stt_str} trên Google Sheet (có thể dòng đã bị xoá)."
+
+
+def update_patient_status(creds_data, sheet_id, sheet_name, sheet_row, new_status, stt=None):
+    """
+    Cập nhật cột TRẠNG THÁI cho 1 bệnh nhân. Chỉ ghi đúng 1 ô, không đụng
+    tới các cột khác. Trả về (thành_công: bool, lỗi: str | None).
+
+    - Nếu truyền `stt` (khoá chính, khuyến khích dùng): tra lại đúng số dòng
+      NGAY TẠI THỜI ĐIỂM GHI theo giá trị STT — an toàn dù Sheet đã bị
+      thêm/xoá/sắp xếp lại dòng từ lúc tải dữ liệu.
+    - Nếu không có `stt`: dùng `sheet_row` truyền vào như cũ (tương thích
+      ngược cho các chỗ chưa có cột STT).
     """
     try:
         cl = authenticate_rw(creds_data)
@@ -1393,21 +1474,34 @@ def update_patient_status(creds_data, sheet_id, sheet_name, sheet_row, new_statu
             return False, f"Không tìm thấy cột '{COL_STATUS}' trên Google Sheet."
         col_idx = headers.index(COL_STATUS) + 1  # gspread dùng chỉ số 1-based
 
+        if stt is not None:
+            resolved_row, err = _resolve_row_by_stt(ws, headers, stt)
+            if err:
+                return False, err
+            sheet_row = resolved_row
+
         ws.update_cell(sheet_row, col_idx, new_status)
         return True, None
     except Exception as e:
         return False, f"Lỗi cập nhật trạng thái: {type(e).__name__}: {e}"
 
 
-def delete_patient_row(creds_data, sheet_id, sheet_name, sheet_row):
+def delete_patient_row(creds_data, sheet_id, sheet_name, sheet_row, stt=None):
     """
-    Xóa hẳn 1 dòng bệnh nhân khỏi Google Sheet, xác định theo SỐ DÒNG
-    THỰC TẾ (sheet_row). Trả về (thành_công: bool, lỗi: str | None).
+    Xóa hẳn 1 dòng bệnh nhân khỏi Google Sheet. Trả về (thành_công: bool, lỗi: str | None).
+    Truyền `stt` để tra lại đúng dòng theo khoá chính ngay tại thời điểm xoá
+    (an toàn hơn dùng sheet_row đã cache) — xem update_patient_status.
     """
     try:
         cl = authenticate_rw(creds_data)
         ss = cl.open_by_key(sheet_id)
         ws = ss.worksheet(sheet_name)
+        if stt is not None:
+            headers = ws.row_values(1)
+            resolved_row, err = _resolve_row_by_stt(ws, headers, stt)
+            if err:
+                return False, err
+            sheet_row = resolved_row
         ws.delete_rows(sheet_row)
         return True, None
     except Exception as e:
@@ -1420,7 +1514,10 @@ def update_patient_status_batch(creds_data, sheet_id, sheet_name, updates):
     (batch_update) thay vì gọi update_cell lặp lại từng dòng — nhanh hơn và
     tránh bị Google giới hạn số request khi đối chiếu hàng loạt.
 
-    updates: list các tuple (sheet_row, new_status).
+    updates: list các tuple (sheet_row, new_status, stt_hoặc_None).
+             Nếu phần tử thứ 3 (stt) có giá trị, dòng ghi sẽ được TRA LẠI
+             theo khoá chính STT ngay tại thời điểm ghi (an toàn hơn, xem
+             update_patient_status) — nếu không, dùng sheet_row như cũ.
     Trả về (số dòng đã cập nhật, lỗi | None).
     """
     if not updates:
@@ -1436,17 +1533,23 @@ def update_patient_status_batch(creds_data, sheet_id, sheet_name, updates):
         col_letter = gspread.utils.rowcol_to_a1(1, headers.index(COL_STATUS) + 1)
         col_letter = "".join(ch for ch in col_letter if ch.isalpha())
 
-        body = [
-            {"range": f"{col_letter}{sheet_row}", "values": [[new_status]]}
-            for sheet_row, new_status in updates
-        ]
+        body = []
+        for u in updates:
+            sheet_row, new_status = u[0], u[1]
+            stt = u[2] if len(u) > 2 else None
+            if stt is not None:
+                resolved_row, err = _resolve_row_by_stt(ws, headers, stt)
+                if err:
+                    return len(body), err
+                sheet_row = resolved_row
+            body.append({"range": f"{col_letter}{sheet_row}", "values": [[new_status]]})
         ws.batch_update(body, value_input_option="USER_ENTERED")
-        return len(updates), None
+        return len(body), None
     except Exception as e:
         return 0, f"Lỗi cập nhật hàng loạt: {type(e).__name__}: {e}"
 
 
-def update_patient_fields(creds_data, sheet_id, sheet_name, sheet_row, field_values):
+def update_patient_fields(creds_data, sheet_id, sheet_name, sheet_row, field_values, stt=None):
     """
     Cập nhật NHIỀU CỘT cùng lúc cho 1 bệnh nhân (1 dòng) — dùng cho việc sửa
     trực tiếp SĐT/Năm sinh ngay trên web ở bước đối chiếu tái khám, khi bệnh
@@ -1454,6 +1557,7 @@ def update_patient_fields(creds_data, sheet_id, sheet_name, sheet_row, field_val
 
     field_values: dict {tên_cột_trên_sheet: giá_trị_mới}, vd
       {"5. SỐ ĐIÊN THOẠI": "0987654321", "NĂM SINH": "1985"}
+    Truyền `stt` để tra lại đúng dòng theo khoá chính (xem update_patient_status).
     Trả về (thành_công: bool, lỗi | None).
     """
     if not field_values:
@@ -1464,6 +1568,11 @@ def update_patient_fields(creds_data, sheet_id, sheet_name, sheet_row, field_val
         ws = ss.worksheet(sheet_name)
 
         headers = ws.row_values(1)
+        if stt is not None:
+            resolved_row, err = _resolve_row_by_stt(ws, headers, stt)
+            if err:
+                return False, err
+            sheet_row = resolved_row
         body = []
         for col_name, new_val in field_values.items():
             if col_name not in headers:
@@ -1647,7 +1756,7 @@ def reconcile_attendance(sheet_patients, visit_records,
             candidates = []
 
         entry = {
-            "sheet_row": p.get("sheet_row"), "name": p_name,
+            "sheet_row": p.get("sheet_row"), "stt": p.get("stt", ""), "name": p_name,
             "phone": p.get("phone", ""), "age": p.get("age", ""),
             "birth_year": p.get("birth_year", ""),
             "exam_date": exam_date, "source": p.get("source", ""),
@@ -3554,13 +3663,15 @@ if st.session_state.metrics:
 
             if visit_file is not None:
                 with st.spinner("Đang đọc file Excel…"):
-                    visit_records, err_vl = parse_minh_lo_visit_log(visit_file)
+                    visit_records, err_vl, warn_vl = parse_minh_lo_visit_log(visit_file)
 
                 if err_vl:
                     st.error(f"❌ {err_vl}")
                 elif not visit_records:
                     st.warning("⚠️ Không tìm thấy dữ liệu trong file. Kiểm tra đúng loại báo cáo \"ĐK KCB\".")
                 else:
+                    if warn_vl:
+                        st.warning(warn_vl)
                     vdates = [d for d in (_parse_ddmmyyyy(v["NGÀY ĐK"]) for v in visit_records) if d]
                     vmin = min(vdates).strftime("%d/%m/%Y") if vdates else "?"
                     vmax = max(vdates).strftime("%d/%m/%Y") if vdates else "?"
@@ -3601,11 +3712,20 @@ if st.session_state.metrics:
                              .str.contains("khoa|tái|nội trú|xuất viện|tai", case=False, na=False))
                     ]
 
+                    if COL_STT not in scope_df.columns:
+                        st.warning(
+                            f"⚠️ Chưa thấy cột '{COL_STT}' trên Google Sheet — cập nhật trạng thái vẫn "
+                            f"chạy được nhưng sẽ dùng vị trí dòng đã tải (kém an toàn hơn nếu Sheet bị "
+                            f"sửa/sắp xếp lại trong lúc thao tác). Thêm cột '{COL_STT}' rồi bấm 🔄 Làm Mới "
+                            f"để bật chế độ tra dòng theo khoá chính, an toàn hơn."
+                        )
+
                     sheet_patients = []
                     for idx2, row in scope_df.iterrows():
                         exam_date = row["_date"].date() if pd.notna(row.get("_date")) else None
                         sheet_patients.append({
                             "sheet_row": int(idx2) + 2,
+                            "stt": row.get(COL_STT, "") if COL_STT in row.index else "",
                             "name": row.get(COL_NAME, ""),
                             "phone": row.get(COL_PHONE, ""),
                             "cccd": row.get(COL_CCCD, ""),
@@ -3673,6 +3793,7 @@ if st.session_state.metrics:
                         def _mk_result_row(r):
                             v = r.get("visit")
                             return {
+                                "STT": r.get("stt", "") or "—",
                                 "Họ tên": r["name"],
                                 "SĐT": r.get("phone", "") or "—",
                                 "Năm sinh": r.get("birth_year", "") or "—",
@@ -3729,6 +3850,7 @@ if st.session_state.metrics:
                         if to_update:
                             def _mk_confirm_row(r):
                                 return {
+                                    "STT": r.get("stt", "") or "—",
                                     "Họ tên": r["name"],
                                     "SĐT": r.get("phone", "") or "—",
                                     "Năm sinh": r.get("birth_year", "") or "—",
@@ -3768,7 +3890,7 @@ if st.session_state.metrics:
                                     with st.spinner(f"Đang cập nhật {len(to_update)} dòng…"):
                                         n_ok, err_batch = update_patient_status_batch(
                                             creds_data, SHEET_ID, SHEET_NAME,
-                                            [(r["sheet_row"], STATUS_ATTENDED) for r in to_update]
+                                            [(r["sheet_row"], STATUS_ATTENDED, r.get("stt") or None) for r in to_update]
                                         )
                                     if err_batch:
                                         st.error(f"❌ {err_batch}")
@@ -3812,7 +3934,8 @@ if st.session_state.metrics:
                             for r in page_rev:
                                 v = r.get("visit") or {}
                                 with st.expander(
-                                    f"👤 {r['name']}  ·  hẹn {r['exam_date'].strftime('%d/%m/%Y') if r['exam_date'] else '—'}"
+                                    f"👤 STT {r.get('stt', '') or '—'} · {r['name']}  ·  "
+                                    f"hẹn {r['exam_date'].strftime('%d/%m/%Y') if r['exam_date'] else '—'}"
                                     f"  ·  độ giống tên {r['score']:.0f}%"
                                 ):
                                     cA, cB = st.columns(2)
@@ -3850,7 +3973,8 @@ if st.session_state.metrics:
                                             else:
                                                 ok, err_f = update_patient_fields(
                                                     creds_data, SHEET_ID, SHEET_NAME, r["sheet_row"],
-                                                    {COL_PHONE: new_phone, COL_BIRTH_YEAR: new_birth}
+                                                    {COL_PHONE: new_phone, COL_BIRTH_YEAR: new_birth},
+                                                    stt=r.get("stt") or None
                                                 )
                                                 if ok:
                                                     st.success("✅ Đã lưu — lần đối chiếu sau sẽ tự khớp đúng hơn.")
@@ -3863,7 +3987,8 @@ if st.session_state.metrics:
                                                 st.error("❌ Chưa có credentials.")
                                             else:
                                                 n_ok2, err2 = update_patient_status_batch(
-                                                    creds_data, SHEET_ID, SHEET_NAME, [(r["sheet_row"], STATUS_ATTENDED)]
+                                                    creds_data, SHEET_ID, SHEET_NAME,
+                                                    [(r["sheet_row"], STATUS_ATTENDED, r.get("stt") or None)]
                                                 )
                                                 if err2:
                                                     st.error(f"❌ {err2}")
