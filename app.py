@@ -1446,6 +1446,39 @@ def update_patient_status_batch(creds_data, sheet_id, sheet_name, updates):
         return 0, f"Lỗi cập nhật hàng loạt: {type(e).__name__}: {e}"
 
 
+def update_patient_fields(creds_data, sheet_id, sheet_name, sheet_row, field_values):
+    """
+    Cập nhật NHIỀU CỘT cùng lúc cho 1 bệnh nhân (1 dòng) — dùng cho việc sửa
+    trực tiếp SĐT/Năm sinh ngay trên web ở bước đối chiếu tái khám, khi bệnh
+    nhân rơi vào danh sách "cần kiểm tra thủ công" (chỉ khớp được mỗi tên).
+
+    field_values: dict {tên_cột_trên_sheet: giá_trị_mới}, vd
+      {"5. SỐ ĐIÊN THOẠI": "0987654321", "NĂM SINH": "1985"}
+    Trả về (thành_công: bool, lỗi | None).
+    """
+    if not field_values:
+        return True, None
+    try:
+        cl = authenticate_rw(creds_data)
+        ss = cl.open_by_key(sheet_id)
+        ws = ss.worksheet(sheet_name)
+
+        headers = ws.row_values(1)
+        body = []
+        for col_name, new_val in field_values.items():
+            if col_name not in headers:
+                continue
+            col_letter = gspread.utils.rowcol_to_a1(1, headers.index(col_name) + 1)
+            col_letter = "".join(ch for ch in col_letter if ch.isalpha())
+            body.append({"range": f"{col_letter}{sheet_row}", "values": [[new_val]]})
+        if not body:
+            return False, "Không tìm thấy cột nào khớp trên Google Sheet."
+        ws.batch_update(body, value_input_option="USER_ENTERED")
+        return True, None
+    except Exception as e:
+        return False, f"Lỗi cập nhật thông tin: {type(e).__name__}: {e}"
+
+
 # ═══════════════════════════════════════════════════════════════
 # ĐỐI CHIẾU TÁI KHÁM — so khớp danh sách đã hẹn (Google Sheet) với
 # nhật ký bệnh nhân THỰC TẾ đến khám (file "Báo cáo ĐK KCB" Minh Lộ),
@@ -1547,40 +1580,45 @@ def reconcile_attendance(sheet_patients, visit_records,
       ngày 27/7 — trong khi thực ra họ CHƯA quay lại. Cửa sổ hẹp + chặn ở
       hôm nay giải quyết đúng vấn đề này.
 
-    THUẬT TOÁN so khớp ĐÚNG NGƯỜI — 3 TẦNG, ưu tiên theo thứ tự:
+    THUẬT TOÁN so khớp ĐÚNG NGƯỜI — 3 TẦNG, ưu tiên theo thứ tự, dừng ở
+    tầng đầu tiên tìm được ứng viên phù hợp:
 
-      TẦNG 1 — Họ tên + SĐT:
-        · SĐT khớp → attended_sure (score 100), bất kể tên viết thế nào.
-        · SĐT có nhưng không khớp ai → FALLTHROUGH xuống Tầng 2
-          (SĐT hay bị nhập sai/thiếu số 0 khi lên sheet, không nên chặn).
+      TẦNG 1 — Tên + SĐT (cả 2 cùng khớp):
+        Trong số các lượt khám (đã lọc theo cửa sổ ngày), tìm bản ghi có
+        SỐ ĐIỆN THOẠI khớp CHÍNH XÁC (đã chuẩn hoá) VÀ Tên đủ giống
+        (≥ NAME_RATIO_MIN, sau khi bỏ dấu) — bắt buộc CẢ HAI, không chỉ
+        riêng SĐT, để tránh nhận nhầm người nhà dùng chung 1 số điện thoại
+        (vd. "Lê Hoàng Phúc" bị gán nhầm cho lượt khám của người thân có
+        cùng SĐT nhưng tên khác hẳn). Khớp được → attended_sure.
 
-      TẦNG 2 — Họ tên + tuổi + năm sinh (±1):
-        Chấm điểm từng ứng viên trong cửa sổ ngày:
-          · Tên (difflib sau bỏ dấu) × 55      → tối đa 55đ
-          · Năm sinh trùng chính xác            → +20đ
-          · Năm sinh lệch ±1                    → +10đ
-          · Tuổi trùng chính xác                → +15đ
-          · Tuổi lệch ±1                        → +7đ
-        ≥ 75đ → attended_sure | 55-74đ → attended_unsure
+      TẦNG 2 — Tên + Năm sinh (±1) (chỉ chạy khi Tầng 1 không ra kết quả):
+        Trong số các lượt khám còn lại, tìm bản ghi có Tên đủ giống
+        (≥ NAME_RATIO_MIN) VÀ Năm sinh khớp chính xác hoặc lệch đúng 1
+        (do năm sinh trên Sheet có thể là ước tính từ tuổi). Khớp được
+        → attended_sure.
 
-      TẦNG 3 — Họ tên + năm sinh (±1), không có tuổi:
-        (Chỉ chạy khi Tầng 2 không ra kết quả)
-          · Tên × 55 + năm sinh exact +20 / ±1 +10
-        ≥ 70đ → attended_sure | 45-69đ → attended_unsure
+      TẦNG 3 — CHỈ Tên (chỉ chạy khi Tầng 1 và 2 đều không ra kết quả):
+        Tìm bản ghi có Tên đủ giống nhất (≥ NAME_RATIO_MIN) mà không cần
+        SĐT hay năm sinh trùng khớp. Vì chỉ dựa vào mỗi cái tên — dễ trùng
+        giữa nhiều người — LUÔN đưa vào danh sách "CẦN KIỂM TRA THỦ CÔNG"
+        (attended_unsure), KHÔNG BAO GIỜ tự động kết luận "chắc chắn đã
+        đến" dù tên khớp tuyệt đối 100%.
+
+      Không tìm được ứng viên nào ở cả 3 tầng → not_attended (chưa đến khám).
 
     sheet_patients: list dict {"sheet_row","name","phone","birth_year","age","exam_date","source"}
     visit_records:  list dict từ parse_minh_lo_visit_log()
 
     Trả về list dict, 1 phần tử / bệnh nhân đã hẹn, gồm:
-      sheet_row, name, phone, age, exam_date, source, score,
-      visit (bản ghi khớp hoặc None), status:
-        "attended_sure"   → ĐÃ ĐẾN khám (khớp SĐT chắc chắn, HOẶC tên+tuổi+
-                             năm sinh khớp gần như tuyệt đối — điểm ≥70)
-        "attended_unsure" → CÓ THỂ đã đến (chỉ khớp tên+tuổi+năm sinh ở mức
-                             vừa phải — điểm 45-69 — cần xác nhận tay)
+      sheet_row, name, phone, age, birth_year, exam_date, source, score,
+      visit (bản ghi khớp hoặc None), match_tier (1/2/3/None), status:
+        "attended_sure"   → ĐÃ ĐẾN khám chắc chắn (Tầng 1 hoặc Tầng 2)
+        "attended_unsure" → CẦN KIỂM TRA THỦ CÔNG (chỉ khớp Tầng 3 — mỗi tên)
         "not_attended"    → CHƯA ĐẾN khám (không tìm thấy trong cửa sổ)
     """
     today_d = today if today is not None else datetime.now().date()
+
+    NAME_RATIO_MIN = 0.92  # ngưỡng độ giống tên tối thiểu, dùng chung cả 3 tầng
 
     results = []
     for p in sheet_patients:
@@ -1591,7 +1629,6 @@ def reconcile_attendance(sheet_patients, visit_records,
             p_birth = int(str(p_birth).strip()) if p_birth else None
         except Exception:
             p_birth = None
-        p_age = _parse_age(p.get("age"))
 
         exam_date = p.get("exam_date")
 
@@ -1614,109 +1651,62 @@ def reconcile_attendance(sheet_patients, visit_records,
             "phone": p.get("phone", ""), "age": p.get("age", ""),
             "birth_year": p.get("birth_year", ""),
             "exam_date": exam_date, "source": p.get("source", ""),
-            "visit": None, "score": 0.0,
+            "visit": None, "score": 0.0, "match_tier": None,
         }
 
-        # ════════════════════════════════════════════════════════
-        # THUẬT TOÁN SO KHỚP — 3 TẦNG
-        #
-        # TẦNG 1 — SĐT khớp chính xác → attended_sure ngay.
-        #   SĐT có nhưng không khớp → FALLTHROUGH Tầng 2 (không chặn,
-        #   vì SĐT hay bị nhập sai/thiếu 0 đầu khi lên Sheet).
-        #
-        # TẦNG 2 — Tên + tuổi + năm sinh (±1):
-        #   Điều kiện CỨNG: name_ratio >= 0.92 (sau bỏ dấu).
-        #   Mục đích: loại bỏ false positive dạng "LÊ VĂN DỤC" khớp nhầm
-        #   "LÊ VĂN DƯNG" (ratio=0.86 < 0.92 → bị loại).
-        #   Nếu ratio đủ, chấm điểm PHỤ:
-        #     · Năm sinh exact     → +20đ
-        #     · Năm sinh ±1        → +8đ
-        #     · Tuổi exact         → +15đ
-        #     · Tuổi ±1            → +5đ
-        #   extra >= 20 → attended_sure   (năm sinh khớp chính xác)
-        #   extra >= 8  → attended_unsure (năm sinh ±1 / tuổi exact)
-        #
-        # TẦNG 3 — Tên + năm sinh (không có tuổi trên Sheet):
-        #   Như Tầng 2, bỏ phần điểm tuổi.
-        # ════════════════════════════════════════════════════════
+        # Cache độ giống tên cho từng ứng viên (tính 1 lần, dùng lại cả 3 tầng)
+        name_sims = [(_name_similarity(p_name, v.get("HỌ TÊN")), v) for v in candidates]
 
-        NAME_RATIO_MIN = 0.92  # ngưỡng tên tối thiểu, loại false positive
-
-        # ── Tầng 1 — SĐT ──────────────────────────────────────
+        # ── TẦNG 1 — Tên + SĐT (bắt buộc cả 2) ──────────────────
+        best1 = None
         if p_phone_key:
-            phone_match = None
-            for v in candidates:
-                if _norm_phone_key(v.get("SỐ ĐIỆN THOẠI")) == p_phone_key:
-                    phone_match = v
-                    break
-            if phone_match is not None:
-                entry["visit"] = phone_match
-                entry["score"] = 100.0
-                entry["status"] = "attended_sure"
-                results.append(entry)
-                continue
-            # SĐT không khớp → fallthrough Tầng 2
+            for ns, v in name_sims:
+                if ns >= NAME_RATIO_MIN and _norm_phone_key(v.get("SỐ ĐIỆN THOẠI")) == p_phone_key:
+                    if best1 is None or ns > best1[0]:
+                        best1 = (ns, v)
+        if best1 is not None:
+            entry["visit"] = best1[1]
+            entry["score"] = round(100 * best1[0], 1)
+            entry["match_tier"] = 1
+            entry["status"] = "attended_sure"
+            results.append(entry)
+            continue
 
-        # ── Hàm tính điểm phụ (dùng cho Tầng 2 & 3) ──────────
-        def _extra_score(v, with_age=True):
-            extra = 0
+        # ── TẦNG 2 — Tên + Năm sinh (±1) ─────────────────────────
+        best2 = None
+        for ns, v in name_sims:
+            if ns < NAME_RATIO_MIN:
+                continue
             try:
                 v_birth = int(str(v.get("NĂM SINH", "")).strip())
             except Exception:
                 v_birth = None
-            if p_birth and v_birth:
-                if v_birth == p_birth:
-                    extra += 20
-                elif abs(v_birth - p_birth) == 1:
-                    extra += 8
-            if with_age:
-                v_age = _parse_age(v.get("TUỔI"))
-                if p_age is not None and v_age is not None:
-                    if v_age == p_age:
-                        extra += 15
-                    elif abs(v_age - p_age) == 1:
-                        extra += 5
-            return extra
-
-        # ── Tầng 2 — Tên (≥0.92) + tuổi + năm sinh ───────────
-        use_age = (p_age is not None)
-        best, best_extra = None, -1
-        for v in candidates:
-            if _name_similarity(p_name, v.get("HỌ TÊN")) < NAME_RATIO_MIN:
-                continue  # tên không đủ gần → loại ngay
-            ex = _extra_score(v, with_age=use_age)
-            if ex > best_extra:
-                best, best_extra = v, ex
-
-        if best is not None and best_extra >= 20:
-            entry["visit"] = best
-            entry["score"] = round(55 + best_extra, 1)
+            if p_birth is None or v_birth is None:
+                continue
+            if abs(v_birth - p_birth) <= 1:
+                if best2 is None or ns > best2[0]:
+                    best2 = (ns, v)
+        if best2 is not None:
+            entry["visit"] = best2[1]
+            entry["score"] = round(100 * best2[0], 1)
+            entry["match_tier"] = 2
             entry["status"] = "attended_sure"
-        elif best is not None and best_extra >= 8:
-            entry["visit"] = best
-            entry["score"] = round(55 + best_extra, 1)
+            results.append(entry)
+            continue
+
+        # ── TẦNG 3 — Chỉ Tên → LUÔN vào danh sách cần kiểm tra thủ công ──
+        best3 = None
+        for ns, v in name_sims:
+            if ns >= NAME_RATIO_MIN and (best3 is None or ns > best3[0]):
+                best3 = (ns, v)
+        if best3 is not None:
+            entry["visit"] = best3[1]
+            entry["score"] = round(100 * best3[0], 1)
+            entry["match_tier"] = 3
             entry["status"] = "attended_unsure"
         else:
-            # ── Tầng 3 — Tên (≥0.92) + năm sinh, bỏ tuổi ─────
-            best3, best3_extra = None, -1
-            for v in candidates:
-                if _name_similarity(p_name, v.get("HỌ TÊN")) < NAME_RATIO_MIN:
-                    continue
-                ex = _extra_score(v, with_age=False)
-                if ex > best3_extra:
-                    best3, best3_extra = v, ex
-
-            if best3 is not None and best3_extra >= 20:
-                entry["visit"] = best3
-                entry["score"] = round(55 + best3_extra, 1)
-                entry["status"] = "attended_sure"
-            elif best3 is not None and best3_extra >= 8:
-                entry["visit"] = best3
-                entry["score"] = round(55 + best3_extra, 1)
-                entry["status"] = "attended_unsure"
-            else:
-                entry["score"] = 0.0
-                entry["status"] = "not_attended"
+            entry["score"] = 0.0
+            entry["status"] = "not_attended"
 
         results.append(entry)
 
@@ -3628,10 +3618,9 @@ if st.session_state.metrics:
                                  hide_index=True, height=360)
 
                     # ── Cập nhật hàng loạt trạng thái "ĐÃ KHÁM" — CHỈ cho các ca
-                    # khớp CHẮC CHẮN (qua SĐT, hoặc tên+tuổi+năm sinh khớp gần
-                    # như tuyệt đối). Ca "cần xác nhận" (khớp tên+tuổi+năm sinh
-                    # ở mức vừa phải) KHÔNG tự động ghi vào Sheet — phải xác
-                    # nhận tay (vd. qua nút "Sửa" ở tab "3 Ngày Tới").
+                    # khớp CHẮC CHẮN ở Tầng 1 (Tên+SĐT) hoặc Tầng 2 (Tên+Năm sinh
+                    # ±1). Ca "cần kiểm tra" (Tầng 3 — chỉ khớp mỗi tên) KHÔNG
+                    # tự động ghi vào Sheet — phải xác nhận tay ở mục riêng bên dưới.
                     confirmable = [r for r in results if r["status"] == "attended_sure"]
                     to_update = [
                         r for r in confirmable
@@ -3647,10 +3636,10 @@ if st.session_state.metrics:
                     )
                     st.markdown(
                         f'<div class="pg-info" style="text-align:left;margin:0.5rem 0 0.8rem">'
-                        f'Có <b>{len(to_update)}</b> bệnh nhân khớp CHẮC CHẮN (qua SĐT, hoặc tên+tuổi+năm sinh '
-                        f'khớp gần như tuyệt đối) và đang ở trạng thái khác "Đã khám" trên Sheet. '
-                        f'Nhóm "cần xác nhận" ({nghi_ngo} ca) <b>không</b> nằm trong danh sách này — '
-                        f'không tự động cập nhật. Kiểm tra kỹ danh sách dưới đây trước khi bấm cập nhật.</div>',
+                        f'Có <b>{len(to_update)}</b> bệnh nhân khớp CHẮC CHẮN (Tên+SĐT, hoặc Tên+Năm sinh '
+                        f'lệch tối đa 1 năm) và đang ở trạng thái khác "Đã khám" trên Sheet. '
+                        f'Nhóm "cần kiểm tra" ({nghi_ngo} ca, chỉ khớp được mỗi tên) <b>không</b> nằm trong '
+                        f'danh sách này — xem và xử lý riêng ở mục bên dưới. Kiểm tra kỹ trước khi bấm cập nhật.</div>',
                         unsafe_allow_html=True
                     )
 
@@ -3663,7 +3652,7 @@ if st.session_state.metrics:
                             "Nguồn bệnh nhân": r.get("source", "") or "—",
                             "Ngày hẹn": r["exam_date"].strftime("%d/%m/%Y") if r["exam_date"] else "—",
                             "Ngày thực đến": r["visit"]["NGÀY ĐK"] if r.get("visit") else "—",
-                            "Khớp qua": "SĐT" if r["score"] == 100.0 else "Tên+Tuổi+Năm sinh",
+                            "Khớp qua": {1: "Tên + SĐT", 2: "Tên + Năm sinh"}.get(r.get("match_tier"), "—"),
                         } for r in to_update]
                         st.dataframe(pd.DataFrame(confirm_rows), use_container_width=True,
                                      hide_index=True, height=min(360, 70 + 35 * len(confirm_rows)))
@@ -3706,6 +3695,86 @@ if st.session_state.metrics:
                             file_name=f"doi_chieu_taikham_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
                             mime="text/csv", use_container_width=True,
                         )
+
+                    # ── Bước 3 — Danh sách CẦN KIỂM TRA THỦ CÔNG (Tầng 3: chỉ
+                    # khớp được mỗi cái tên, không có SĐT/năm sinh xác nhận).
+                    # Cho phép SỬA TRỰC TIẾP SĐT/Năm sinh trên Sheet (để lần đối
+                    # chiếu sau tự khớp đúng tầng 1/2), hoặc XÁC NHẬN THỦ CÔNG
+                    # ngay tại đây nếu nhìn info đã đủ chắc là đúng người.
+                    need_review = [r for r in results if r["status"] == "attended_unsure"]
+                    if need_review:
+                        st.markdown(
+                            '<div class="sh"><div class="sh-dot" style="background:#f59e0b"></div>'
+                            '<span class="sh-txt">🔎 Bước 3 — Cần Kiểm Tra Thủ Công (chỉ khớp tên)</span></div>',
+                            unsafe_allow_html=True
+                        )
+                        st.caption(
+                            f"{len(need_review)} bệnh nhân chỉ khớp được TÊN với 1 lượt khám trong log "
+                            f"(không có SĐT hoặc năm sinh để xác nhận thêm) — xem kỹ thông tin 2 bên rồi "
+                            f"chọn 1 trong 2 cách xử lý cho từng người."
+                        )
+                        for r in need_review:
+                            v = r.get("visit") or {}
+                            with st.expander(
+                                f"👤 {r['name']}  ·  hẹn {r['exam_date'].strftime('%d/%m/%Y') if r['exam_date'] else '—'}"
+                                f"  ·  độ giống tên {r['score']:.0f}%"
+                            ):
+                                cA, cB = st.columns(2)
+                                with cA:
+                                    st.markdown("**Trên Google Sheet**")
+                                    st.write(f"SĐT: {r.get('phone') or '—'}")
+                                    st.write(f"Năm sinh: {r.get('birth_year') or '—'}")
+                                    st.write(f"Tuổi (lúc hẹn): {r.get('age') or '—'}")
+                                    st.write(f"Nguồn: {r.get('source') or '—'}")
+                                with cB:
+                                    st.markdown("**Ứng viên khớp trong log Minh Lộ**")
+                                    st.write(f"SĐT: {v.get('SỐ ĐIỆN THOẠI') or '—'}")
+                                    st.write(f"Năm sinh: {v.get('NĂM SINH') or '—'}")
+                                    st.write(f"Tuổi: {v.get('TUỔI') or '—'}")
+                                    st.write(f"Ngày ĐK: {v.get('NGÀY ĐK') or '—'}  ·  Khoa: {v.get('KHOA ĐK') or '—'}")
+
+                                st.markdown("—")
+                                ec1, ec2 = st.columns(2)
+                                with ec1:
+                                    new_phone = st.text_input(
+                                        "Sửa SĐT trên Sheet", value=str(v.get("SỐ ĐIỆN THOẠI") or r.get("phone") or ""),
+                                        key=f"edit_phone_{r['sheet_row']}"
+                                    )
+                                with ec2:
+                                    new_birth = st.text_input(
+                                        "Sửa Năm sinh trên Sheet", value=str(v.get("NĂM SINH") or r.get("birth_year") or ""),
+                                        key=f"edit_birth_{r['sheet_row']}"
+                                    )
+                                bA, bB = st.columns(2)
+                                with bA:
+                                    if st.button("💾 Lưu SĐT/Năm sinh vào Sheet", key=f"save_info_{r['sheet_row']}",
+                                                 use_container_width=True):
+                                        if not creds_data:
+                                            st.error("❌ Chưa có credentials.")
+                                        else:
+                                            ok, err_f = update_patient_fields(
+                                                creds_data, SHEET_ID, SHEET_NAME, r["sheet_row"],
+                                                {COL_PHONE: new_phone, COL_BIRTH_YEAR: new_birth}
+                                            )
+                                            if ok:
+                                                st.success("✅ Đã lưu — lần đối chiếu sau sẽ tự khớp đúng hơn.")
+                                            else:
+                                                st.error(f"❌ {err_f}")
+                                with bB:
+                                    if st.button("✅ Xác nhận đây đúng — đánh dấu Đã khám", key=f"confirm_att_{r['sheet_row']}",
+                                                 use_container_width=True, type="primary"):
+                                        if not creds_data:
+                                            st.error("❌ Chưa có credentials.")
+                                        else:
+                                            n_ok2, err2 = update_patient_status_batch(
+                                                creds_data, SHEET_ID, SHEET_NAME, [(r["sheet_row"], STATUS_ATTENDED)]
+                                            )
+                                            if err2:
+                                                st.error(f"❌ {err2}")
+                                            else:
+                                                st.success("✅ Đã đánh dấu Đã khám cho bệnh nhân này.")
+                                                st.session_state.metrics = None
+
 
 
 else:
