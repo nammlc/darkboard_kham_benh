@@ -1618,112 +1618,104 @@ def reconcile_attendance(sheet_patients, visit_records,
         }
 
         # ════════════════════════════════════════════════════════
-        # THUẬT TOÁN SO KHỚP — 3 TẦNG, ƯU TIÊN THEO THỨ TỰ:
+        # THUẬT TOÁN SO KHỚP — 3 TẦNG
         #
-        # TẦNG 1: Họ tên + SĐT
-        #   → Khớp cả hai → attended_sure (score 100)
-        #   → Chỉ khớp SĐT (tên rất khác) → attended_sure (score 95)
-        #     vì SĐT là định danh đáng tin nhất
-        #   → Có SĐT nhưng không khớp ai → fallback xuống Tầng 2
-        #     (SĐT trong sheet hay bị nhập sai → không nên chặn ở đây)
+        # TẦNG 1 — SĐT khớp chính xác → attended_sure ngay.
+        #   SĐT có nhưng không khớp → FALLTHROUGH Tầng 2 (không chặn,
+        #   vì SĐT hay bị nhập sai/thiếu 0 đầu khi lên Sheet).
         #
-        # TẦNG 2: Họ tên + tuổi + năm sinh (±1)
-        #   Chấm điểm từng ứng viên trong cửa sổ ngày:
-        #     · Tên (difflib sau khi bỏ dấu) × 55   → tối đa 55đ
-        #     · Năm sinh trùng chính xác             → +20đ
-        #     · Năm sinh lệch ±1                     → +10đ
-        #     · Tuổi trùng chính xác                 → +15đ
-        #     · Tuổi lệch ±1                         → +7đ
-        #   ≥ 75đ → attended_sure  (tên + năm sinh + tuổi đều khớp)
-        #   55-74đ → attended_unsure (tên khớp nhưng thiếu thêm 1 trường)
+        # TẦNG 2 — Tên + tuổi + năm sinh (±1):
+        #   Điều kiện CỨNG: name_ratio >= 0.92 (sau bỏ dấu).
+        #   Mục đích: loại bỏ false positive dạng "LÊ VĂN DỤC" khớp nhầm
+        #   "LÊ VĂN DƯNG" (ratio=0.86 < 0.92 → bị loại).
+        #   Nếu ratio đủ, chấm điểm PHỤ:
+        #     · Năm sinh exact     → +20đ
+        #     · Năm sinh ±1        → +8đ
+        #     · Tuổi exact         → +15đ
+        #     · Tuổi ±1            → +5đ
+        #   extra >= 20 → attended_sure   (năm sinh khớp chính xác)
+        #   extra >= 8  → attended_unsure (năm sinh ±1 / tuổi exact)
         #
-        # TẦNG 3: Họ tên + năm sinh (±1) — không có tuổi trên Sheet
-        #   Như Tầng 2 nhưng bỏ điểm tuổi:
-        #     · Tên × 55 + năm sinh exact +20 / ±1 +10
-        #   ≥ 70đ → attended_sure; 45-69đ → attended_unsure
+        # TẦNG 3 — Tên + năm sinh (không có tuổi trên Sheet):
+        #   Như Tầng 2, bỏ phần điểm tuổi.
         # ════════════════════════════════════════════════════════
 
-        # ── Tầng 1 — Họ tên + SĐT ──────────────────────────────
+        NAME_RATIO_MIN = 0.92  # ngưỡng tên tối thiểu, loại false positive
+
+        # ── Tầng 1 — SĐT ──────────────────────────────────────
         if p_phone_key:
             phone_match = None
             for v in candidates:
                 if _norm_phone_key(v.get("SỐ ĐIỆN THOẠI")) == p_phone_key:
                     phone_match = v
                     break
-
             if phone_match is not None:
-                # SĐT khớp → chắc chắn đúng người, bất kể tên viết thế nào
                 entry["visit"] = phone_match
                 entry["score"] = 100.0
                 entry["status"] = "attended_sure"
                 results.append(entry)
                 continue
-            # SĐT có nhưng không khớp ai → KHÔNG dừng, fallthrough Tầng 2
-            # (SĐT hay bị nhập sai/thiếu số 0 → tiếp tục so tên+năm sinh)
+            # SĐT không khớp → fallthrough Tầng 2
 
-        # ── Tầng 2 — Tên + tuổi + năm sinh (±1) ────────────────
-        best, best_score = None, 0.0
-        for v in candidates:
-            name_ratio = _name_similarity(p_name, v.get("HỌ TÊN"))
-            score = name_ratio * 55  # tối đa 55đ
-
-            # Năm sinh
+        # ── Hàm tính điểm phụ (dùng cho Tầng 2 & 3) ──────────
+        def _extra_score(v, with_age=True):
+            extra = 0
             try:
                 v_birth = int(str(v.get("NĂM SINH", "")).strip())
             except Exception:
                 v_birth = None
             if p_birth and v_birth:
                 if v_birth == p_birth:
-                    score += 20          # khớp chính xác
+                    extra += 20
                 elif abs(v_birth - p_birth) == 1:
-                    score += 10          # lệch ±1 (ước tính từ tuổi có thể sai 1 năm)
+                    extra += 8
+            if with_age:
+                v_age = _parse_age(v.get("TUỔI"))
+                if p_age is not None and v_age is not None:
+                    if v_age == p_age:
+                        extra += 15
+                    elif abs(v_age - p_age) == 1:
+                        extra += 5
+            return extra
 
-            # Tuổi
-            v_age = _parse_age(v.get("TUỔI"))
-            if p_age is not None and v_age is not None:
-                if v_age == p_age:
-                    score += 15          # khớp chính xác
-                elif abs(v_age - p_age) == 1:
-                    score += 7           # lệch ±1
+        # ── Tầng 2 — Tên (≥0.92) + tuổi + năm sinh ───────────
+        use_age = (p_age is not None)
+        best, best_extra = None, -1
+        for v in candidates:
+            if _name_similarity(p_name, v.get("HỌ TÊN")) < NAME_RATIO_MIN:
+                continue  # tên không đủ gần → loại ngay
+            ex = _extra_score(v, with_age=use_age)
+            if ex > best_extra:
+                best, best_extra = v, ex
 
-            if score > best_score:
-                best, best_score = v, score
-
-        entry["score"] = round(best_score, 1)
-        if best is not None and best_score >= 75:
+        if best is not None and best_extra >= 20:
             entry["visit"] = best
+            entry["score"] = round(55 + best_extra, 1)
             entry["status"] = "attended_sure"
-        elif best is not None and best_score >= 55:
+        elif best is not None and best_extra >= 8:
             entry["visit"] = best
+            entry["score"] = round(55 + best_extra, 1)
             entry["status"] = "attended_unsure"
         else:
-            # ── Tầng 3 — Tên + năm sinh (±1), không có tuổi ────
-            # Chạy lại với bộ điểm đơn giản hơn khi p_age là None
-            # (bệnh nhân trên Sheet không có cột TUỔI)
-            best3, best3_score = None, 0.0
+            # ── Tầng 3 — Tên (≥0.92) + năm sinh, bỏ tuổi ─────
+            best3, best3_extra = None, -1
             for v in candidates:
-                name_ratio = _name_similarity(p_name, v.get("HỌ TÊN"))
-                score3 = name_ratio * 55
-                try:
-                    v_birth = int(str(v.get("NĂM SINH", "")).strip())
-                except Exception:
-                    v_birth = None
-                if p_birth and v_birth:
-                    if v_birth == p_birth:
-                        score3 += 20
-                    elif abs(v_birth - p_birth) == 1:
-                        score3 += 10
-                if score3 > best3_score:
-                    best3, best3_score = v, score3
+                if _name_similarity(p_name, v.get("HỌ TÊN")) < NAME_RATIO_MIN:
+                    continue
+                ex = _extra_score(v, with_age=False)
+                if ex > best3_extra:
+                    best3, best3_extra = v, ex
 
-            entry["score"] = round(best3_score, 1)
-            if best3 is not None and best3_score >= 70:
+            if best3 is not None and best3_extra >= 20:
                 entry["visit"] = best3
+                entry["score"] = round(55 + best3_extra, 1)
                 entry["status"] = "attended_sure"
-            elif best3 is not None and best3_score >= 45:
+            elif best3 is not None and best3_extra >= 8:
                 entry["visit"] = best3
+                entry["score"] = round(55 + best3_extra, 1)
                 entry["status"] = "attended_unsure"
             else:
+                entry["score"] = 0.0
                 entry["status"] = "not_attended"
 
         results.append(entry)
