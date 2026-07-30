@@ -408,7 +408,7 @@ div[data-testid="stDownloadButton"] button {
 .dlg-group-hd b { font-size:0.82rem; color:#1e293b; }
 .dlg-group-hd span { font-size:0.72rem; color:#64748b; }
 
-/* ── CARD BỆNH NHÂN (tab "3 Ngày Tới") ── */
+/* ── QUẢN LÝ: SỬA / XÓA BỆNH NHÂN (tab "3 Ngày Tới") ── */
 .mrow-section-hd {
     display:flex; align-items:center; gap:0.4rem;
     margin:0.9rem 0 0.55rem;
@@ -416,90 +416,42 @@ div[data-testid="stDownloadButton"] button {
     background:#f8fafc; border:1px solid #e2e8f0; border-radius:10px;
     padding:0.55rem 0.9rem;
 }
-
-/* Container ngoài — viền trái màu theo trạng thái */
-div[class*="mrow_"] {
-    background:#fff;
-    border:1px solid #e2e8f0;
-    border-left:4px solid #cbd5e1;
-    border-radius:12px;
-    margin-bottom:0.55rem;
-    box-shadow:0 1px 4px rgba(15,23,42,0.05);
-    overflow:hidden;
-    transition:box-shadow 0.15s, border-color 0.15s;
+div[class*="_mrow_"] {
+    background:white; border:1px solid #e2e8f0; border-radius:12px;
+    padding:0.55rem 0.65rem; margin-bottom:0.5rem;
+    box-shadow:0 1px 3px rgba(0,0,0,0.05);
+    transition:box-shadow 0.15s;
 }
-div[class*="mrow_"]:hover { box-shadow:0 3px 12px rgba(15,23,42,0.09); }
-div[class*="mrow_"][class*="_att"] { border-left-color:#10b981; }
-div[class*="mrow_"][class*="_nos"] { border-left-color:#ef4444; }
-
-/* Bên trong: 2 cột ngang — body (thông tin) + sidebar (badge + nút) */
-div[class*="mrow_"] > div[data-testid="stHorizontalBlock"] {
-    align-items:stretch !important;
-    gap:0 !important;
-    flex-wrap:nowrap !important;
-    padding:0 !important;
-}
-
-/* Cột thông tin bệnh nhân */
-div[class*="mrow_"] > div[data-testid="stHorizontalBlock"]
-    > div[data-testid="column"]:first-child {
-    padding:0.7rem 0.8rem 0.65rem 0.85rem !important;
-    min-width:0 !important; flex:1 1 0 !important;
-    border-right:1px solid #f1f5f9;
-}
-
-/* Cột sidebar: badge + 2 nút */
-div[class*="mrow_"] > div[data-testid="stHorizontalBlock"]
-    > div[data-testid="column"]:last-child {
-    padding:0.55rem 0.6rem 0.55rem 0.6rem !important;
-    flex:0 0 110px !important; min-width:110px !important;
-    display:flex !important; flex-direction:column !important;
-    align-items:stretch !important; gap:0.35rem !important;
-    background:#fafbfc;
-    justify-content:center !important;
-}
-
-/* Thông tin trong body */
-.mrow-info { display:flex; flex-direction:column; gap:0.18rem; min-width:0; }
-.mrow-name {
-    font-size:0.84rem; font-weight:700; color:#0f172a;
-    white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
-    margin-bottom:0.1rem;
-}
-.mrow-sub { font-size:0.68rem; color:#64748b; }
-
-/* Badge trạng thái — nằm trên cùng trong sidebar */
+div[class*="_mrow_"]:hover { box-shadow:0 3px 10px rgba(0,0,0,0.08); }
+/* Giữ mọi thứ (tên, badge, 2 nút icon) trên CÙNG 1 HÀNG NGANG */
+div[class*="_mrow_"] div[data-testid="stHorizontalBlock"] { align-items:center; gap:0.35rem; flex-wrap:nowrap; }
+.mrow-info { display:flex; flex-direction:column; gap:0.15rem; min-width:0; }
+.mrow-name { font-size:0.82rem; font-weight:700; color:#0f172a; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.mrow-sub  { font-size:0.68rem; color:#64748b; font-family:'JetBrains Mono',monospace !important; }
 .mrow-badge {
-    display:block; width:100%; text-align:center; box-sizing:border-box;
-    font-size:0.58rem; font-weight:700; letter-spacing:0.02em;
-    padding:0.25rem 0.3rem; border-radius:6px;
-    line-height:1.35; word-break:break-word; white-space:normal;
+    display:inline-block; font-size:0.62rem; font-weight:700;
+    padding:0.18rem 0.5rem; border-radius:20px; white-space:nowrap;
 }
 .mrow-badge-att { background:#d1fae5; color:#065f46; }
 .mrow-badge-nos { background:#fee2e2; color:#991b1b; }
-.mrow-status-wrap { display:flex; }
-.mrow-status-wrap .mrow-badge { flex:1; }
+.mrow-status-wrap { display:flex; align-items:center; justify-content:center; height:100%; padding:0.1rem 0; }
+.mrow-status-wrap .mrow-badge { text-align:center; white-space:normal; line-height:1.25; }
 
-/* Nút ✏️ / 🗑️ — full width trong sidebar, cân đối nhau */
+/* Nút "✏️" / "🗑️" — chỉ icon, vuông nhỏ gọn, nằm cùng hàng với thông tin */
 div[class*="editbtn_"] .stButton>button,
 div[class*="delbtn_"] .stButton>button {
-    width:100% !important; border-radius:7px !important;
-    font-size:0.72rem !important; font-weight:600 !important;
-    padding:0.28rem 0.3rem !important;
-    min-height:0 !important; height:auto !important;
-    line-height:1.3 !important;
-    box-shadow:none !important; transform:none !important;
+    border-radius:9px !important; font-weight:700 !important;
+    font-size:0.95rem !important; padding:0.4rem 0 !important;
+    transform:none !important; box-shadow:none !important; line-height:1 !important;
 }
 div[class*="editbtn_"] .stButton>button {
-    background:#eff6ff !important; color:#1d4ed8 !important;
-    border:1.5px solid #bfdbfe !important;
+    background:#eff6ff !important; color:#1d4ed8 !important; border:1.5px solid #bfdbfe !important;
 }
-div[class*="editbtn_"] .stButton>button:hover { background:#dbeafe !important; }
+div[class*="editbtn_"] .stButton>button:hover { background:#dbeafe !important; border-color:#93c5fd !important; }
 div[class*="delbtn_"] .stButton>button {
-    background:#fef2f2 !important; color:#b91c1c !important;
-    border:1.5px solid #fecaca !important;
+    background:#fef2f2 !important; color:#b91c1c !important; border:1.5px solid #fecaca !important;
 }
-div[class*="delbtn_"] .stButton>button:hover { background:#fee2e2 !important; }
+div[class*="delbtn_"] .stButton>button:hover { background:#fee2e2 !important; border-color:#fca5a5 !important; }
 
 /* Dropdown "✏️ Sửa trạng thái" mở ngay dưới hàng — không phải popup mới */
 div[class*="editdrop_"] {
@@ -2508,47 +2460,43 @@ def render_upcoming_table(sub_df, empty_msg, dl_prefix, dl_key, page_state_key=N
     # phạm vi "fragment" (_smart_rerun) nên KHÔNG làm đóng popup danh sách
     # đang mở — không cần bấm lại "Xem chi tiết danh sách" nữa. ──
     for m_idx, m_row in page_df.iterrows():
+        # m_idx là index gốc lấy từ Google Sheet (0-based, dòng dữ liệu đầu = index 0
+        # = dòng 2 trên Sheet, vì dòng 1 là tiêu đề) → dòng thực tế = m_idx + 2.
         sheet_row = int(m_idx) + 2
-        m_status  = str(m_row.get(COL_STATUS, "") or "—")
-        m_is_att  = STATUS_ATTENDED.upper() in m_status.upper()
+        m_status = str(m_row.get(COL_STATUS, "") or "—")
+        m_is_att = STATUS_ATTENDED.upper() in m_status.upper()
         m_badge_cls = "mrow-badge-att" if m_is_att else "mrow-badge-nos"
         info_html = patient_row_info_html(m_row)
-        m_name    = str(m_row.get(COL_NAME, "") or "—")
+        m_name = str(m_row.get(COL_NAME, "") or "—")
         edit_open_key = f"inline_edit_open_{dl_key}_{sheet_row}"
-        del_open_key  = f"inline_del_open_{dl_key}_{sheet_row}"
-        att_cls = "att" if m_is_att else "nos"
+        del_open_key = f"inline_del_open_{dl_key}_{sheet_row}"
 
-        with st.container(key=f"mrow_{dl_key}_{sheet_row}_{att_cls}"):
-            # 2 cột: [thông tin bệnh nhân | sidebar: badge + nút sửa/xóa]
-            col_body, col_side = st.columns([5, 1.1])
-
-            with col_body:
+        with st.container(key=f"mrow_{dl_key}_{sheet_row}_{'att' if m_is_att else 'nos'}"):
+            mc1, mc2, mc3, mc4 = st.columns([4.3, 1.5, 0.65, 0.65])
+            with mc1:
                 st.markdown(info_html, unsafe_allow_html=True)
-
-            with col_side:
-                # Badge trạng thái
+            with mc2:
                 st.markdown(
-                    f'<div class="mrow-status-wrap">'
-                    f'<span class="mrow-badge {m_badge_cls}">{m_status}</span>'
-                    f'</div>',
-                    unsafe_allow_html=True,
+                    f'<div class="mrow-status-wrap"><span class="mrow-badge {m_badge_cls}">{m_status}</span></div>',
+                    unsafe_allow_html=True
                 )
-                # Nút Sửa
+            with mc3:
                 with st.container(key=f"editbtn_{dl_key}_{sheet_row}"):
-                    if st.button("✏️ Sửa", key=f"btn_edit_{dl_key}_{sheet_row}",
-                                 use_container_width=True, help="Sửa trạng thái khám"):
+                    if st.button("✏️", key=f"btn_edit_{dl_key}_{sheet_row}", use_container_width=True,
+                                 help="Sửa trạng thái khám"):
                         st.session_state[edit_open_key] = not st.session_state.get(edit_open_key, False)
-                        st.session_state[del_open_key]  = False
+                        st.session_state[del_open_key] = False
                         _smart_rerun()
-                # Nút Xóa
+            with mc4:
                 with st.container(key=f"delbtn_{dl_key}_{sheet_row}"):
-                    if st.button("🗑️ Xóa", key=f"btn_del_{dl_key}_{sheet_row}",
-                                 use_container_width=True, help="Xóa bệnh nhân"):
-                        st.session_state[del_open_key]  = not st.session_state.get(del_open_key, False)
+                    if st.button("🗑️", key=f"btn_del_{dl_key}_{sheet_row}", use_container_width=True,
+                                 help="Xóa bệnh nhân"):
+                        st.session_state[del_open_key] = not st.session_state.get(del_open_key, False)
                         st.session_state[edit_open_key] = False
                         _smart_rerun()
 
-            # Dropdown Sửa/Xóa mở ngay dưới card
+            # Dropdown Sửa/Xóa — mở rộng NGAY DƯỚI hàng, bên trong cùng 1 thẻ,
+            # không mở popup mới nên popup danh sách bên ngoài không bị đóng.
             if st.session_state.get(edit_open_key):
                 render_inline_edit_form(sheet_row, m_name, m_status, open_key=edit_open_key)
             if st.session_state.get(del_open_key):
@@ -2763,10 +2711,11 @@ if st.session_state.metrics:
     """, unsafe_allow_html=True)
 
     # ── TABS ────────────────────────────────────
-    tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
+    tab1, tab2, tab3, tab3b, tab4, tab5, tab6, tab7, tab8 = st.tabs([
         "📊 Tổng Quan",
         "🔍 Tìm Theo Ngày",
         "📅 3 Ngày Tới",
+        "📞 Nhắc Lịch",
         "🏥 Nguồn Bệnh Nhân",
         "📈 Báo Cáo",
         "👤 Bệnh Nhân",
@@ -3082,6 +3031,195 @@ if st.session_state.metrics:
                 '</div>',
                 unsafe_allow_html=True
             )
+
+    # ═══════════════════════════
+    # TAB 3B — NHẮC LỊCH
+    # Danh sách bệnh nhân 3 ngày QUA chưa đến khám / bỏ khám
+    # ═══════════════════════════
+    with tab3b:
+        st.markdown(
+            '<div class="sh"><div class="sh-dot" style="background:#ef4444"></div>'
+            '<span class="sh-txt">Danh Sách Bệnh Nhân Cần Nhắc Lịch</span></div>',
+            unsafe_allow_html=True,
+        )
+
+        # 3 ngày trước hôm nay (không gồm hôm nay)
+        past_dates = [today - timedelta(days=i) for i in range(1, 4)]
+        df_full = m.get("df_full", df)
+
+        if "_date" not in df_full.columns or not df_full["_date"].notna().any():
+            st.info("Chưa có dữ liệu ngày khám.")
+        else:
+            # Lọc bệnh nhân trong 3 ngày qua VÀ chưa đến khám
+            mask_past  = df_full["_date"].dt.date.isin(past_dates)
+            mask_nos   = ~(
+                df_full[COL_STATUS].astype(str).str.upper()
+                .str.contains(STATUS_ATTENDED.upper(), na=False)
+            )
+            df_remind  = df_full[mask_past & mask_nos].copy()
+
+            # Tổng KPI
+            total_remind = len(df_remind)
+            has_phone    = df_remind[COL_PHONE].astype(str).str.strip()
+            has_phone    = has_phone[~has_phone.isin(["", "0", "nan", "N/A", "—"])]
+            n_has_phone  = len(has_phone)
+            n_no_phone   = total_remind - n_has_phone
+
+            st.markdown(f"""
+            <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:0.6rem;margin:0.5rem 0 1rem">
+              <div class="kc kc-r" style="padding:0.8rem 1rem">
+                <div class="kc-lbl">Tổng Cần Nhắc</div>
+                <div class="kc-val" style="font-size:1.9rem;color:#dc2626">{total_remind}</div>
+                <div style="font-size:0.68rem;color:#94a3b8">trong 3 ngày qua</div>
+              </div>
+              <div class="kc kc-g" style="padding:0.8rem 1rem">
+                <div class="kc-lbl">Có Số Điện Thoại</div>
+                <div class="kc-val" style="font-size:1.9rem;color:#059669">{n_has_phone}</div>
+                <div style="font-size:0.68rem;color:#94a3b8">gọi được ngay</div>
+              </div>
+              <div class="kc" style="padding:0.8rem 1rem;background:#fafbfc;border:1px solid #e2e8f0;border-radius:12px">
+                <div class="kc-lbl">Không Có SĐT</div>
+                <div class="kc-val" style="font-size:1.9rem;color:#f59e0b">{n_no_phone}</div>
+                <div style="font-size:0.68rem;color:#94a3b8">cần tra thêm</div>
+              </div>
+            </div>
+            """, unsafe_allow_html=True)
+
+            if total_remind == 0:
+                st.success("✅ Tất cả bệnh nhân trong 3 ngày qua đã đến khám!")
+            else:
+                # Bộ lọc theo ngày + khoa
+                filter_col1, filter_col2 = st.columns([1, 1])
+
+                with filter_col1:
+                    date_options = ["Tất cả ngày"] + [
+                        d.strftime("%d/%m/%Y") for d in sorted(past_dates, reverse=True)
+                        if d in df_remind["_date"].dt.date.unique()
+                    ]
+                    sel_date = st.selectbox("📅 Lọc theo ngày:", date_options, key="remind_date_sel")
+
+                with filter_col2:
+                    khoa_list = sorted(
+                        df_remind[COL_KHOA].dropna().astype(str).str.strip()
+                        .replace("", pd.NA).dropna().unique().tolist()
+                    ) if COL_KHOA in df_remind.columns else []
+                    khoa_options = ["Tất cả khoa"] + khoa_list
+                    sel_khoa_r = st.selectbox("🏥 Lọc theo khoa:", khoa_options, key="remind_khoa_sel")
+
+                # Áp dụng filter
+                df_filtered = df_remind.copy()
+                if sel_date != "Tất cả ngày":
+                    sel_date_obj = datetime.strptime(sel_date, "%d/%m/%Y").date()
+                    df_filtered = df_filtered[df_filtered["_date"].dt.date == sel_date_obj]
+                if sel_khoa_r != "Tất cả khoa" and COL_KHOA in df_filtered.columns:
+                    df_filtered = df_filtered[
+                        df_filtered[COL_KHOA].astype(str).str.strip() == sel_khoa_r
+                    ]
+
+                st.caption(f"Hiển thị {len(df_filtered)} / {total_remind} bệnh nhân cần nhắc")
+
+                # Hiển thị từng ngày trong 3 ngày qua
+                for past_d in sorted(past_dates, reverse=True):
+                    day_df = df_filtered[df_filtered["_date"].dt.date == past_d]
+                    if day_df.empty:
+                        continue
+
+                    vn_days = ["Thứ Hai","Thứ Ba","Thứ Tư","Thứ Năm","Thứ Sáu","Thứ Bảy","Chủ Nhật"]
+                    day_label = f"{vn_days[past_d.weekday()]} · {past_d.strftime('%d/%m/%Y')}"
+                    n_day = len(day_df)
+                    n_day_phone = day_df[COL_PHONE].astype(str).str.strip().apply(
+                        lambda x: x not in ["", "0", "nan", "N/A", "—"]
+                    ).sum()
+
+                    st.markdown(
+                        f'<div class="mrow-section-hd">'
+                        f'📅 {day_label} &nbsp;·&nbsp; '
+                        f'<span style="color:#dc2626;font-weight:700">{n_day} chưa đến</span>'
+                        f'&nbsp;·&nbsp; '
+                        f'<span style="color:#059669">{n_day_phone} có SĐT</span>'
+                        f'</div>',
+                        unsafe_allow_html=True,
+                    )
+
+                    # Card từng bệnh nhân — dạng compact có nút gọi điện
+                    for _, row in day_df.iterrows():
+                        r_name   = str(row.get(COL_NAME,   "") or "—")
+                        r_phone  = str(row.get(COL_PHONE,  "") or "")
+                        r_byr    = str(row.get(COL_BIRTH_YEAR, "") or "")
+                        r_khoa   = str(row.get(COL_KHOA,   "") or "")
+                        r_src    = str(row.get(COL_SOURCE, "") or "")
+                        r_status = str(row.get(COL_STATUS, "") or "")
+                        r_time   = str(row.get(COL_EXAM_TIME, "") or "")
+                        if len(r_time) >= 5 and ":" in r_time:
+                            r_time = r_time[:5]
+
+                        has_tel   = r_phone.strip() not in ["", "0", "nan", "N/A", "—"]
+                        tel_clean = "".join(c for c in r_phone if c.isdigit() or c == "+")
+                        phone_html = (
+                            f'<a href="tel:{tel_clean}" style="'
+                            f'color:#fff;background:#059669;padding:0.18rem 0.55rem;'
+                            f'border-radius:6px;font-size:0.7rem;font-weight:700;'
+                            f'text-decoration:none;white-space:nowrap">📞 {r_phone}</a>'
+                            if has_tel else
+                            '<span style="color:#94a3b8;font-size:0.7rem">📞 Không có SĐT</span>'
+                        )
+
+                        khoa_html = (
+                            f'<span class="pt-tag pt-tag-doc" style="font-size:0.67rem">'
+                            f'{r_khoa[:28]}</span>'
+                            if r_khoa.strip() and r_khoa not in ["nan","N/A","—"] else ""
+                        )
+                        src_html  = source_badge(r_src) or ""
+                        time_html = (
+                            f'<span class="mrow-meta-chip">🕐 {r_time}</span>'
+                            if r_time and r_time not in ["—","N/A","nan"] else ""
+                        )
+                        byr_html  = (
+                            f'<span class="mrow-meta-chip">🎂 {r_byr}</span>'
+                            if r_byr and r_byr not in ["","—","N/A","nan"] else ""
+                        )
+
+                        st.markdown(f"""
+                        <div style="
+                            background:#fff;border:1px solid #e2e8f0;
+                            border-left:4px solid #ef4444;border-radius:11px;
+                            padding:0.6rem 0.85rem;margin-bottom:0.45rem;
+                            box-shadow:0 1px 4px rgba(15,23,42,0.05);
+                            display:flex;align-items:center;justify-content:space-between;
+                            flex-wrap:wrap;gap:0.4rem;
+                        ">
+                          <div style="flex:1;min-width:180px">
+                            <div style="font-size:0.85rem;font-weight:700;color:#0f172a;margin-bottom:0.2rem">
+                              👤 {r_name}
+                            </div>
+                            <div style="display:flex;flex-wrap:wrap;gap:0.3rem;align-items:center">
+                              {time_html}{byr_html}{khoa_html}{src_html}
+                            </div>
+                          </div>
+                          <div style="flex-shrink:0">
+                            {phone_html}
+                          </div>
+                        </div>
+                        """, unsafe_allow_html=True)
+
+                # Nút tải CSV danh sách cần nhắc
+                remind_cols = [col for col in [
+                    COL_NAME, COL_EXAM_DATE, COL_EXAM_TIME,
+                    COL_PHONE, COL_KHOA, COL_SOURCE, COL_STATUS
+                ] if col in df_filtered.columns]
+                csv_remind = df_filtered[remind_cols].to_csv(index=False, encoding="utf-8-sig")
+                fname_remind = (
+                    f"nhac_lich_{sel_date.replace('/','')}_{today.strftime('%Y%m%d')}.csv"
+                    if sel_date != "Tất cả ngày"
+                    else f"nhac_lich_3ngay_{today.strftime('%Y%m%d')}.csv"
+                )
+                st.download_button(
+                    label=f"⬇️ Tải danh sách nhắc lịch (.csv)",
+                    data=csv_remind.encode("utf-8-sig"),
+                    file_name=fname_remind,
+                    mime="text/csv",
+                    key="dl_remind_csv",
+                )
 
     # ════════════════
     # TAB 4 — NGUỒN BỆNH NHÂN
