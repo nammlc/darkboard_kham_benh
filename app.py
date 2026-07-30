@@ -239,8 +239,8 @@ button[data-testid="baseButton-headerNoPadding"] { display:none !important; }
     border-radius:20px; white-space:nowrap; line-height:1.35;
 }
 .pt-tag-wrap {
-    white-space:nowrap !important; overflow:hidden; text-overflow:ellipsis;
-    max-width:220px; line-height:1.3;
+    white-space:normal !important; line-height:1.35; max-width:100%;
+    word-break:break-word; flex-basis:100%;
 }
 .pt-tag-date  { background:#eff6ff; color:#1d4ed8; }
 .pt-tag-spec  { background:#f0fdf4; color:#166534; }
@@ -408,7 +408,7 @@ div[data-testid="stDownloadButton"] button {
 .dlg-group-hd b { font-size:0.82rem; color:#1e293b; }
 .dlg-group-hd span { font-size:0.72rem; color:#64748b; }
 
-/* ── QUẢN LÝ: SỬA / XÓA BỆNH NHÂN (tab "3 Ngày Tới") ── */
+/* ── CARD BỆNH NHÂN (tab "3 Ngày Tới") ── */
 .mrow-section-hd {
     display:flex; align-items:center; gap:0.4rem;
     margin:0.9rem 0 0.55rem;
@@ -416,59 +416,107 @@ div[data-testid="stDownloadButton"] button {
     background:#f8fafc; border:1px solid #e2e8f0; border-radius:10px;
     padding:0.55rem 0.9rem;
 }
-div[class*="_mrow_"] {
-    background:white; border:1px solid #e2e8f0; border-radius:12px;
-    padding:0.55rem 0.65rem; margin-bottom:0.5rem;
-    box-shadow:0 1px 3px rgba(0,0,0,0.05);
-    transition:box-shadow 0.15s;
+
+/* Container ngoài — viền trái màu theo trạng thái */
+div[class*="mrow_"] {
+    background:#fff;
+    border:1px solid #e2e8f0;
+    border-left:4px solid #cbd5e1;
+    border-radius:12px;
+    margin-bottom:0.55rem;
+    box-shadow:0 1px 4px rgba(15,23,42,0.05);
+    overflow:hidden;
+    transition:box-shadow 0.15s, border-color 0.15s;
 }
-div[class*="_mrow_"]:hover { box-shadow:0 3px 10px rgba(0,0,0,0.08); }
-/* Giữ mọi thứ (tên, badge, 2 nút icon) trên CÙNG 1 HÀNG NGANG */
-div[class*="_mrow_"] div[data-testid="stHorizontalBlock"] { align-items:center; gap:0.35rem; flex-wrap:nowrap; }
-.mrow-info { display:flex; flex-direction:column; gap:0.15rem; min-width:0; }
-.mrow-name { font-size:0.82rem; font-weight:700; color:#0f172a; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-.mrow-sub  { font-size:0.68rem; color:#64748b; font-family:'JetBrains Mono',monospace !important; }
+div[class*="mrow_"]:hover { box-shadow:0 3px 12px rgba(15,23,42,0.09); }
+div[class*="mrow_"][class*="_att"] { border-left-color:#10b981; }
+div[class*="mrow_"][class*="_nos"] { border-left-color:#ef4444; }
+
+/* Bên trong: 2 cột ngang — body (thông tin) + sidebar (badge + nút) */
+div[class*="mrow_"] > div[data-testid="stHorizontalBlock"] {
+    align-items:stretch !important;
+    gap:0 !important;
+    flex-wrap:nowrap !important;
+    padding:0 !important;
+}
+
+/* Cột thông tin bệnh nhân */
+div[class*="mrow_"] > div[data-testid="stHorizontalBlock"]
+    > div[data-testid="column"]:first-child {
+    padding:0.7rem 0.8rem 0.65rem 0.85rem !important;
+    min-width:0 !important; flex:1 1 0 !important;
+    border-right:1px solid #f1f5f9;
+}
+
+/* Cột sidebar: badge + 2 nút */
+div[class*="mrow_"] > div[data-testid="stHorizontalBlock"]
+    > div[data-testid="column"]:last-child {
+    padding:0.55rem 0.6rem 0.55rem 0.6rem !important;
+    flex:0 0 110px !important; min-width:110px !important;
+    display:flex !important; flex-direction:column !important;
+    align-items:stretch !important; gap:0.35rem !important;
+    background:#fafbfc;
+    justify-content:center !important;
+}
+
+/* Thông tin trong body */
+.mrow-info { display:flex; flex-direction:column; gap:0.18rem; min-width:0; }
+.mrow-name {
+    font-size:0.84rem; font-weight:700; color:#0f172a;
+    white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+    margin-bottom:0.1rem;
+}
+.mrow-sub { font-size:0.68rem; color:#64748b; }
+
+/* Badge trạng thái — nằm trên cùng trong sidebar */
 .mrow-badge {
-    display:inline-block; font-size:0.62rem; font-weight:700;
-    padding:0.18rem 0.5rem; border-radius:20px; white-space:nowrap;
+    display:block; width:100%; text-align:center; box-sizing:border-box;
+    font-size:0.58rem; font-weight:700; letter-spacing:0.02em;
+    padding:0.25rem 0.3rem; border-radius:6px;
+    line-height:1.35; word-break:break-word; white-space:normal;
 }
 .mrow-badge-att { background:#d1fae5; color:#065f46; }
 .mrow-badge-nos { background:#fee2e2; color:#991b1b; }
-.mrow-status-wrap { display:flex; align-items:center; justify-content:center; height:100%; padding:0.1rem 0; }
-.mrow-status-wrap .mrow-badge { text-align:center; white-space:normal; line-height:1.25; }
+.mrow-status-wrap { display:flex; }
+.mrow-status-wrap .mrow-badge { flex:1; }
 
-/* Nút "✏️" / "🗑️" — chỉ icon, vuông nhỏ gọn, nằm cùng hàng với thông tin */
+/* Nút ✏️ / 🗑️ — full width trong sidebar, cân đối nhau */
 div[class*="editbtn_"] .stButton>button,
 div[class*="delbtn_"] .stButton>button {
-    border-radius:9px !important; font-weight:700 !important;
-    font-size:0.95rem !important; padding:0.4rem 0 !important;
-    transform:none !important; box-shadow:none !important; line-height:1 !important;
+    width:100% !important; border-radius:7px !important;
+    font-size:0.72rem !important; font-weight:600 !important;
+    padding:0.28rem 0.3rem !important;
+    min-height:0 !important; height:auto !important;
+    line-height:1.3 !important;
+    box-shadow:none !important; transform:none !important;
 }
 div[class*="editbtn_"] .stButton>button {
-    background:#eff6ff !important; color:#1d4ed8 !important; border:1.5px solid #bfdbfe !important;
+    background:#eff6ff !important; color:#1d4ed8 !important;
+    border:1.5px solid #bfdbfe !important;
 }
-div[class*="editbtn_"] .stButton>button:hover { background:#dbeafe !important; border-color:#93c5fd !important; }
+div[class*="editbtn_"] .stButton>button:hover { background:#dbeafe !important; }
 div[class*="delbtn_"] .stButton>button {
-    background:#fef2f2 !important; color:#b91c1c !important; border:1.5px solid #fecaca !important;
+    background:#fef2f2 !important; color:#b91c1c !important;
+    border:1.5px solid #fecaca !important;
 }
-div[class*="delbtn_"] .stButton>button:hover { background:#fee2e2 !important; border-color:#fca5a5 !important; }
+div[class*="delbtn_"] .stButton>button:hover { background:#fee2e2 !important; }
 
 /* Dropdown "✏️ Sửa trạng thái" mở ngay dưới hàng — không phải popup mới */
 div[class*="editdrop_"] {
     background:#f8fbff; border:1.5px solid #bfdbfe; border-radius:11px;
-    padding:0.6rem 0.8rem 0.5rem; margin:0.4rem 0 0.15rem;
+    padding:0.7rem 0.8rem 0.5rem; margin:0.5rem 0 0.15rem;
 }
 .edit-dlg-name {
-    font-size:0.8rem; font-weight:700; color:#0f172a;
-    margin-bottom:0.5rem; text-align:center;
+    font-size:0.84rem; font-weight:700; color:#0f172a;
+    margin-bottom:0.6rem; text-align:center;
 }
 div[class*="editdrop_"] div[role="radiogroup"] {
-    display:flex; flex-direction:row; gap:0.4rem; flex-wrap:wrap; margin-bottom:0.45rem;
+    display:flex; flex-direction:row; gap:0.5rem; flex-wrap:wrap; margin-bottom:0.5rem;
 }
 div[class*="editdrop_"] div[role="radiogroup"] label {
     background:white; border:1.5px solid #e2e8f0 !important; border-radius:9px !important;
-    padding:0.35rem 0.65rem !important;
-    font-size:0.72rem !important; font-weight:600 !important; color:#1e293b !important;
+    padding:0.45rem 0.7rem !important;
+    font-size:0.74rem !important; font-weight:600 !important; color:#1e293b !important;
     transition:all 0.15s;
 }
 div[class*="editdrop_"] div[role="radiogroup"] label:hover {
@@ -476,24 +524,6 @@ div[class*="editdrop_"] div[role="radiogroup"] label:hover {
 }
 div[class*="editdrop_"] div[role="radiogroup"] label[data-checked="true"] {
     background:#dbeafe !important; border-color:#3b82f6 !important;
-}
-/* Nút Lưu / Đóng — nhỏ gọn, không chiếm full width */
-div[class*="editdrop_"] .stButton>button,
-div[class*="deldrop_"] .stButton>button {
-    font-size:0.75rem !important; padding:0.3rem 0.9rem !important;
-    min-height:0 !important; height:auto !important;
-    border-radius:8px !important; font-weight:600 !important;
-    box-shadow:none !important; transform:none !important;
-    width:auto !important;
-}
-/* Wrapper cột nút — căn giữa + không kéo dãn */
-div[class*="editdrop_"] [data-testid="stHorizontalBlock"],
-div[class*="deldrop_"]  [data-testid="stHorizontalBlock"] {
-    justify-content:center !important; gap:0.5rem !important;
-}
-div[class*="editdrop_"] [data-testid="column"],
-div[class*="deldrop_"]  [data-testid="column"] {
-    flex:0 0 auto !important; min-width:0 !important;
 }
 
 /* Dropdown xác nhận "🗑️ Xóa bệnh nhân" mở ngay dưới hàng */
@@ -2063,17 +2093,16 @@ def build_stats(df, period):
     return stats.merge(first,on="Kỳ").sort_values("_s").drop(columns="_s")
 
 def source_badge(src_val):
-    """Return HTML badge for patient source — truncate dài > 28 ký tự."""
+    """Return HTML badge for patient source."""
     s = str(src_val).strip()
     if not s or s in ("nan",""):
         return ""
-    label = (s[:26] + "…") if len(s) > 28 else s
     if any(k in s.lower() for k in ["khoa","tái","nội trú","xuất viện","tai"]):
-        return f'<span class="pt-tag pt-tag-wrap src-noi" title="{s}">🏥 {label}</span>'
+        return f'<span class="pt-tag pt-tag-wrap src-noi">🏥 {s}</span>'
     elif any(k in s.lower() for k in ["vãng lai","vang lai","ngoài","ngoai"]):
-        return f'<span class="pt-tag pt-tag-wrap src-vl" title="{s}">🚶 {label}</span>'
+        return f'<span class="pt-tag pt-tag-wrap src-vl">🚶 {s}</span>'
     else:
-        return f'<span class="pt-tag pt-tag-wrap src-other" title="{s}">👤 {label}</span>'
+        return f'<span class="pt-tag pt-tag-wrap src-other">👤 {s}</span>'
 
 def patient_card_html(row):
     name   = str(row.get(COL_NAME,"")      or "—")
@@ -2479,43 +2508,47 @@ def render_upcoming_table(sub_df, empty_msg, dl_prefix, dl_key, page_state_key=N
     # phạm vi "fragment" (_smart_rerun) nên KHÔNG làm đóng popup danh sách
     # đang mở — không cần bấm lại "Xem chi tiết danh sách" nữa. ──
     for m_idx, m_row in page_df.iterrows():
-        # m_idx là index gốc lấy từ Google Sheet (0-based, dòng dữ liệu đầu = index 0
-        # = dòng 2 trên Sheet, vì dòng 1 là tiêu đề) → dòng thực tế = m_idx + 2.
         sheet_row = int(m_idx) + 2
-        m_status = str(m_row.get(COL_STATUS, "") or "—")
-        m_is_att = STATUS_ATTENDED.upper() in m_status.upper()
+        m_status  = str(m_row.get(COL_STATUS, "") or "—")
+        m_is_att  = STATUS_ATTENDED.upper() in m_status.upper()
         m_badge_cls = "mrow-badge-att" if m_is_att else "mrow-badge-nos"
         info_html = patient_row_info_html(m_row)
-        m_name = str(m_row.get(COL_NAME, "") or "—")
+        m_name    = str(m_row.get(COL_NAME, "") or "—")
         edit_open_key = f"inline_edit_open_{dl_key}_{sheet_row}"
-        del_open_key = f"inline_del_open_{dl_key}_{sheet_row}"
+        del_open_key  = f"inline_del_open_{dl_key}_{sheet_row}"
+        att_cls = "att" if m_is_att else "nos"
 
-        with st.container(key=f"mrow_{dl_key}_{sheet_row}_{'att' if m_is_att else 'nos'}"):
-            mc1, mc2, mc3, mc4 = st.columns([4.3, 1.5, 0.65, 0.65])
-            with mc1:
+        with st.container(key=f"mrow_{dl_key}_{sheet_row}_{att_cls}"):
+            # 2 cột: [thông tin bệnh nhân | sidebar: badge + nút sửa/xóa]
+            col_body, col_side = st.columns([5, 1.1])
+
+            with col_body:
                 st.markdown(info_html, unsafe_allow_html=True)
-            with mc2:
+
+            with col_side:
+                # Badge trạng thái
                 st.markdown(
-                    f'<div class="mrow-status-wrap"><span class="mrow-badge {m_badge_cls}">{m_status}</span></div>',
-                    unsafe_allow_html=True
+                    f'<div class="mrow-status-wrap">'
+                    f'<span class="mrow-badge {m_badge_cls}">{m_status}</span>'
+                    f'</div>',
+                    unsafe_allow_html=True,
                 )
-            with mc3:
+                # Nút Sửa
                 with st.container(key=f"editbtn_{dl_key}_{sheet_row}"):
-                    if st.button("✏️", key=f"btn_edit_{dl_key}_{sheet_row}", use_container_width=True,
-                                 help="Sửa trạng thái khám"):
+                    if st.button("✏️ Sửa", key=f"btn_edit_{dl_key}_{sheet_row}",
+                                 use_container_width=True, help="Sửa trạng thái khám"):
                         st.session_state[edit_open_key] = not st.session_state.get(edit_open_key, False)
-                        st.session_state[del_open_key] = False
+                        st.session_state[del_open_key]  = False
                         _smart_rerun()
-            with mc4:
+                # Nút Xóa
                 with st.container(key=f"delbtn_{dl_key}_{sheet_row}"):
-                    if st.button("🗑️", key=f"btn_del_{dl_key}_{sheet_row}", use_container_width=True,
-                                 help="Xóa bệnh nhân"):
-                        st.session_state[del_open_key] = not st.session_state.get(del_open_key, False)
+                    if st.button("🗑️ Xóa", key=f"btn_del_{dl_key}_{sheet_row}",
+                                 use_container_width=True, help="Xóa bệnh nhân"):
+                        st.session_state[del_open_key]  = not st.session_state.get(del_open_key, False)
                         st.session_state[edit_open_key] = False
                         _smart_rerun()
 
-            # Dropdown Sửa/Xóa — mở rộng NGAY DƯỚI hàng, bên trong cùng 1 thẻ,
-            # không mở popup mới nên popup danh sách bên ngoài không bị đóng.
+            # Dropdown Sửa/Xóa mở ngay dưới card
             if st.session_state.get(edit_open_key):
                 render_inline_edit_form(sheet_row, m_name, m_status, open_key=edit_open_key)
             if st.session_state.get(del_open_key):
