@@ -425,7 +425,10 @@ div[data-testid="stDownloadButton"] button {
     background:#f8fafc; border:1px solid #e2e8f0; border-radius:10px;
     padding:0.55rem 0.9rem;
 }
-.mrow-info { display:flex; flex-direction:column; gap:0.15rem; min-width:0; }
+.mrow-details {
+    margin-top:0.55rem; padding-top:0.5rem;
+    border-top:1px dashed #e6eaf1;
+}
 .mrow-name { font-size:0.82rem; font-weight:700; color:#0f172a; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 .mrow-sub  { font-size:0.68rem; color:#64748b; font-family:'JetBrains Mono',monospace !important; }
 .mrow-badge {
@@ -434,7 +437,7 @@ div[data-testid="stDownloadButton"] button {
 }
 .mrow-badge-att { background:#d1fae5; color:#065f46; }
 .mrow-badge-nos { background:#fee2e2; color:#991b1b; }
-.mrow-status-wrap { display:flex; align-items:flex-start; justify-content:center; padding-top:0.1rem; }
+.mrow-status-wrap { display:flex; align-items:center; justify-content:center; }
 .mrow-status-wrap .mrow-badge { text-align:center; white-space:normal; line-height:1.25; }
 
 /* Nút "✏️" / "🗑️" — chỉ icon, vuông nhỏ gọn, nằm cùng hàng với thông tin */
@@ -607,12 +610,11 @@ div[class*="mrow_"] {
 div[class*="mrow_"]:hover { border-color:#bfdbfe; background:#f8fbff; }
 div[class*="mrow_"][class*="_att"] { border-left-color:#10b981; }
 div[class*="mrow_"][class*="_nos"] { border-left-color:#ef4444; }
-/* Giữ NHÃN TRẠNG THÁI + 2 nút ✏️/🗑️ NEO SÁT TRÊN (ngang hàng với tên bệnh
-   nhân) thay vì bị canh giữa theo chiều dọc — vì cột thông tin bên trái
-   (tên + các dòng badge + banner nguồn) ngày càng dài, canh giữa sẽ làm
-   nút trông lọt thỏm/lệch tâm so với phần trên cùng. */
+/* Hàng đầu mỗi thẻ (tên — trạng thái — ✏️ — 🗑️) giờ CHỈ có nội dung 1
+   dòng ngắn (phần chi tiết dài đã tách xuống hàng riêng bên dưới, tràn
+   đủ chiều rộng) — nên canh GIỮA theo chiều dọc cho cân đối, gọn gàng. */
 div[class*="mrow_"] div[data-testid="stHorizontalBlock"] {
-    align-items:flex-start !important; gap:0.5rem; flex-wrap:nowrap;
+    align-items:center !important; gap:0.5rem; flex-wrap:nowrap;
 }
 
 /* == FORCE LIGHT MODE — disable dark theme == */
@@ -2335,7 +2337,7 @@ def khoa_badge_html(khoa_val):
 def source_banner_html(src_val):
     """
     Dòng NGUỒN BỆNH NHÂN dạng thanh ngang gọn gàng (không phải pill kéo dài
-    hết chiều ngang trông kỳ) — dùng riêng cho patient_row_info_html (tab
+    hết chiều ngang trông kỳ) — dùng riêng cho patient_row_details_html (tab
     "3 Ngày Tới"), tách hẳn khỏi hàng badge ngắn (khoa/chuyên khoa) để dễ
     đọc và không bị chật.
     """
@@ -2351,14 +2353,22 @@ def source_banner_html(src_val):
     return f'<div class="src-banner {cls}"><span class="sb-ico">{ico}</span><span>{s}</span></div>'
 
 
-def patient_row_info_html(row2):
+def patient_row_header_html(row2):
+    """Chỉ tên bệnh nhân — dùng cho HÀNG ĐẦU (cùng dòng với trạng thái +
+    nút Sửa/Xóa), để hàng đầu luôn gọn 1 dòng, không lệ thuộc độ dài phần
+    chi tiết bên dưới."""
+    name = str(row2.get(COL_NAME,"") or "—")
+    return '<div class="mrow-name">👤 ' + name + '</div>'
+
+
+def patient_row_details_html(row2):
     """
-    Dựng khối thông tin (tên + các thẻ chi tiết) cho MỘT bệnh nhân, dùng làm
-    cột đầu tiên của mỗi "hàng" trong danh sách bệnh nhân (tab 3 Ngày Tới).
-    Trạng thái + nút Sửa/Xóa được render riêng ở các cột kế tiếp bởi
-    render_upcoming_table, không nằm trong khối này.
+    Các thẻ chi tiết (giờ hẹn/năm sinh/SĐT, khoa/chuyên khoa, banner nguồn)
+    cho MỘT bệnh nhân — hiển thị TRÀN ĐỦ CHIỀU RỘNG của cả hàng (không bị
+    ép trong 1 cột hẹp bên cạnh trạng thái/nút), nằm NGAY DƯỚI hàng tên +
+    trạng thái + nút, để không còn khoảng trắng lệch bên phải khi phần
+    chi tiết dài mà cột trạng thái/nút lại ngắn.
     """
-    name  = str(row2.get(COL_NAME,"") or "—")
     byr   = str(row2.get(COL_BIRTH_YEAR,"") or "—")
     phone = str(row2.get(COL_PHONE,"") or "—")
     etime = str(row2.get(COL_EXAM_TIME,"") or "—")
@@ -2390,8 +2400,7 @@ def patient_row_info_html(row2):
         phone_show = '<span style="color:#94a3b8">📞 ' + phone + '</span>'
 
     return (
-        '<div class="mrow-info">'
-        '<div class="mrow-name">👤 ' + name + '</div>'
+        '<div class="mrow-details">'
         '<div class="pt-row" style="margin:0.3rem 0 0">'
         '<span class="pt-tag pt-tag-date">🕒 ' + etime + '</span>'
         '<span class="pt-tag pt-tag-spec">🎂 ' + byr + '</span>'
@@ -2490,15 +2499,18 @@ def render_upcoming_table(sub_df, empty_msg, dl_prefix, dl_key, page_state_key=N
         m_status = str(m_row.get(COL_STATUS, "") or "—")
         m_is_att = STATUS_ATTENDED.upper() in m_status.upper()
         m_badge_cls = "mrow-badge-att" if m_is_att else "mrow-badge-nos"
-        info_html = patient_row_info_html(m_row)
+        header_html = patient_row_header_html(m_row)
+        details_html = patient_row_details_html(m_row)
         m_name = str(m_row.get(COL_NAME, "") or "—")
         edit_open_key = f"inline_edit_open_{dl_key}_{sheet_row}"
         del_open_key = f"inline_del_open_{dl_key}_{sheet_row}"
 
         with st.container(key=f"mrow_{dl_key}_{sheet_row}_{'att' if m_is_att else 'nos'}"):
+            # ── Hàng 1 — CHỈ tên + trạng thái + 2 nút, luôn gọn 1 dòng,
+            # không phụ thuộc phần chi tiết dài hay ngắn bên dưới. ──
             mc1, mc2, mc3, mc4 = st.columns([4.3, 1.5, 0.65, 0.65])
             with mc1:
-                st.markdown(info_html, unsafe_allow_html=True)
+                st.markdown(header_html, unsafe_allow_html=True)
             with mc2:
                 st.markdown(
                     f'<div class="mrow-status-wrap"><span class="mrow-badge {m_badge_cls}">{m_status}</span></div>',
@@ -2518,6 +2530,12 @@ def render_upcoming_table(sub_df, empty_msg, dl_prefix, dl_key, page_state_key=N
                         st.session_state[del_open_key] = not st.session_state.get(del_open_key, False)
                         st.session_state[edit_open_key] = False
                         _smart_rerun()
+
+            # ── Hàng 2 — chi tiết (giờ/năm sinh/SĐT, khoa, banner nguồn)
+            # TRẢI ĐỦ CHIỀU RỘNG cả thẻ, không bị ép vào 1 cột hẹp bên cạnh
+            # trạng thái/nút — đây là phần trước đây để trống bên phải quá
+            # nhiều, trông lệch/mất cân đối. ──
+            st.markdown(details_html, unsafe_allow_html=True)
 
             # Dropdown Sửa/Xóa — mở rộng NGAY DƯỚI hàng, bên trong cùng 1 thẻ,
             # không mở popup mới nên popup danh sách bên ngoài không bị đóng.
