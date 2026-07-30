@@ -238,6 +238,10 @@ button[data-testid="baseButton-headerNoPadding"] { display:none !important; }
     font-size:0.68rem; font-weight:600; padding:0.2rem 0.55rem;
     border-radius:20px; white-space:nowrap;
 }
+.pt-tag-wrap {
+    white-space:normal !important; line-height:1.3; max-width:100%;
+    word-break:break-word;
+}
 .pt-tag-date  { background:#eff6ff; color:#1d4ed8; }
 .pt-tag-spec  { background:#f0fdf4; color:#166534; }
 .pt-tag-doc   { background:#fdf4ff; color:#6b21a8; }
@@ -421,7 +425,7 @@ div[class*="_mrow_"] {
 div[class*="_mrow_"]:hover { box-shadow:0 3px 10px rgba(0,0,0,0.08); }
 /* Giữ mọi thứ (tên, badge, 2 nút icon) trên CÙNG 1 HÀNG NGANG */
 div[class*="_mrow_"] div[data-testid="stHorizontalBlock"] { align-items:center; gap:0.35rem; flex-wrap:nowrap; }
-.mrow-info { display:flex; flex-direction:column; gap:0.15rem; overflow:hidden; }
+.mrow-info { display:flex; flex-direction:column; gap:0.15rem; min-width:0; }
 .mrow-name { font-size:0.82rem; font-weight:700; color:#0f172a; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 .mrow-sub  { font-size:0.68rem; color:#64748b; font-family:'JetBrains Mono',monospace !important; }
 .mrow-badge {
@@ -2045,11 +2049,11 @@ def source_badge(src_val):
     if not s or s in ("nan",""):
         return ""
     if any(k in s.lower() for k in ["khoa","tái","nội trú","xuất viện","tai"]):
-        return f'<span class="pt-tag src-noi">🏥 {s[:30]}</span>'
+        return f'<span class="pt-tag pt-tag-wrap src-noi">🏥 {s[:24]}</span>'
     elif any(k in s.lower() for k in ["vãng lai","vang lai","ngoài","ngoai"]):
-        return f'<span class="pt-tag src-vl">🚶 {s[:30]}</span>'
+        return f'<span class="pt-tag pt-tag-wrap src-vl">🚶 {s[:24]}</span>'
     else:
-        return f'<span class="pt-tag src-other">👤 {s[:30]}</span>'
+        return f'<span class="pt-tag pt-tag-wrap src-other">👤 {s[:24]}</span>'
 
 def patient_card_html(row):
     name   = str(row.get(COL_NAME,"")      or "—")
