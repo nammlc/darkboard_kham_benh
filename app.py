@@ -1802,7 +1802,7 @@ def reconcile_attendance(sheet_patients, visit_records,
             "phone": p.get("phone", ""), "age": p.get("age", ""),
             "birth_year": p.get("birth_year", ""),
             "exam_date": exam_date, "source": p.get("source", ""),
-            "visit": None, "score": 0.0, "match_tier": None,
+            "visit": None, "score": 0.0, "match_tier": None, "near_miss": None,
         }
 
         # Cache độ giống tên cho từng ứng viên (tính 1 lần, dùng lại cả 3 tầng).
@@ -1864,6 +1864,22 @@ def reconcile_attendance(sheet_patients, visit_records,
         else:
             entry["score"] = 0.0
             entry["status"] = "not_attended"
+            # ── "NGHI BỊ SÓT" — trước khi kết luận hẳn "chưa khám", thử tìm
+            # tên giống trong TOÀN BỘ file (bỏ giới hạn cửa sổ ngày). Nếu có,
+            # rất có thể bệnh nhân THỰC SỰ đã đến khám nhưng ngoài cửa sổ cho
+            # phép (đến sớm/muộn hơn hẹn quá xa, hoặc NGÀY KHÁM trên Sheet bị
+            # sai) — báo rõ ra để soát tay thay vì im lặng kết luận nhầm
+            # "chưa khám" (đây chính là kiểu lỗi "bị sót" gặp trên thực tế).
+            near = None
+            for v in visit_records:
+                ok, ratio = _name_match_ok(p_name, v.get("HỌ TÊN"), NAME_RATIO_MIN)
+                if ok and (near is None or ratio > near[0]):
+                    near = (ratio, v)
+            if near is not None:
+                vd = _parse_ddmmyyyy(near[1].get("NGÀY ĐK"))
+                entry["near_miss"] = {
+                    "visit": near[1], "score": round(100 * near[0], 1), "visit_date": vd,
+                }
 
         results.append(entry)
 
@@ -1920,8 +1936,9 @@ def process(df):
             spec.columns = ["Chuyên khoa","Số lượng"]
     gen = None
     if COL_GENDER in df.columns:
-        g = df[COL_GENDER].astype(str).str.strip()
-        g = g[g.str.upper().isin(["NAM","NỮ","NU"])]
+        g = df[COL_GENDER].astype(str).str.strip().str.upper()
+        g = g.replace({"NU": "NỮ"})
+        g = g[g.isin(["NAM", "NỮ"])]
         if not g.empty:
             gen = g.value_counts().reset_index()
             gen.columns = ["Giới tính","Số lượng"]
@@ -1967,9 +1984,23 @@ def build_stats(df, period):
     elif period=="Tháng":    d["Kỳ"] = d["_date"].dt.strftime("Tháng %m/%Y")
     elif period=="Quý":      d["Kỳ"] = d["_date"].apply(lambda x: f"Q{((x.month-1)//3)+1}/{x.year}")
     elif period=="Năm":      d["Kỳ"] = d["_date"].dt.strftime("Năm %Y")
+    d["_att"] = d[COL_STATUS].astype(str).str.upper() == STATUS_ATTENDED.upper()
+    if COL_SOURCE in d.columns:
+        src_vals = d[COL_SOURCE].astype(str)
+        d["_tk"] = src_vals.str.contains("khoa|tái|nội trú|xuất viện|tai", case=False, na=False)
+        d["_vl"] = src_vals.str.contains("vãng lai|vang lai|ngoài|ngoai", case=False, na=False)
+    else:
+        d["_tk"] = False
+        d["_vl"] = False
+
     grp   = d.groupby("Kỳ", sort=False)
     stats = grp.size().reset_index(name="Đăng ký")
-    stats["Đã khám"]    = grp.apply(lambda g: (g[COL_STATUS].str.upper()==STATUS_ATTENDED.upper()).sum()).values
+    # ── Đến khám / Vắng, tách riêng theo TỪNG NGUỒN trước, rồi mới cộng tổng ──
+    stats["Đến - Tái Khám"] = grp.apply(lambda g: (g["_att"] & g["_tk"]).sum()).values
+    stats["Đến - Vãng Lai"] = grp.apply(lambda g: (g["_att"] & g["_vl"]).sum()).values
+    stats["Vắng - Tái Khám"] = grp.apply(lambda g: (g["_tk"] & ~g["_att"]).sum()).values
+    stats["Vắng - Vãng Lai"] = grp.apply(lambda g: (g["_vl"] & ~g["_att"]).sum()).values
+    stats["Đã khám"]    = grp.apply(lambda g: g["_att"].sum()).values
     stats["Vắng / Chưa"]= stats["Đăng ký"] - stats["Đã khám"]
     stats["Tỷ lệ đến (%)"]  = (stats["Đã khám"]/stats["Đăng ký"]*100).round(1)
     stats["Tỷ lệ vắng (%)"] = (stats["Vắng / Chưa"]/stats["Đăng ký"]*100).round(1)
@@ -3368,17 +3399,30 @@ if st.session_state.metrics:
                 rows_html += f"""<tr>
                   <td>{row['Kỳ']}</td>
                   <td class="num">{int(row['Đăng ký'])}</td>
-                  <td class="num" style="color:#059669">{int(row['Đã khám'])}</td>
-                  <td class="num" style="color:#dc2626">{int(row['Vắng / Chưa'])}</td>
+                  <td class="num" style="color:#059669">{int(row['Đến - Tái Khám'])}</td>
+                  <td class="num" style="color:#059669">{int(row['Đến - Vãng Lai'])}</td>
+                  <td class="num" style="color:#dc2626">{int(row['Vắng - Tái Khám'])}</td>
+                  <td class="num" style="color:#dc2626">{int(row['Vắng - Vãng Lai'])}</td>
+                  <td class="num" style="color:#059669;font-weight:700">{int(row['Đã khám'])}</td>
+                  <td class="num" style="color:#dc2626;font-weight:700">{int(row['Vắng / Chưa'])}</td>
                   <td class="{g_cls}">{row['Tỷ lệ đến (%)']}%</td>
                   <td class="{r_cls}">{row['Tỷ lệ vắng (%)']}%</td>
                 </tr>"""
             st.markdown(f"""
             <div class="rtbl-wrap">
-              <table class="rtbl"><thead><tr>
-                <th>Kỳ</th><th>Tổng</th><th>Đã Khám</th>
-                <th>Vắng</th><th>% Đến</th><th>% Vắng</th>
-              </tr></thead><tbody>{rows_html}</tbody></table>
+              <table class="rtbl"><thead>
+                <tr>
+                  <th rowspan="2">Kỳ</th><th rowspan="2">Tổng</th>
+                  <th colspan="2">Đến Khám</th>
+                  <th colspan="2">Vắng</th>
+                  <th rowspan="2">Tổng Đến</th><th rowspan="2">Tổng Vắng</th>
+                  <th rowspan="2">% Đến</th><th rowspan="2">% Vắng</th>
+                </tr>
+                <tr>
+                  <th style="font-size:0.68rem">🏥 Tái Khám</th><th style="font-size:0.68rem">🚶 Vãng Lai</th>
+                  <th style="font-size:0.68rem">🏥 Tái Khám</th><th style="font-size:0.68rem">🚶 Vãng Lai</th>
+                </tr>
+              </thead><tbody>{rows_html}</tbody></table>
             </div>
             <div class="scroll-hint">← Vuốt ngang để xem thêm →</div>
             """, unsafe_allow_html=True)
@@ -3804,11 +3848,14 @@ if st.session_state.metrics:
                         da_den = counts.get("attended_sure", 0)
                         chua_den = counts.get("not_attended", 0)
                         nghi_ngo = counts.get("attended_unsure", 0)
+                        sot_list = [r for r in results if r["status"] == "not_attended" and r.get("near_miss")]
                         st.success(
                             f"📊 **Kết quả đối chiếu {len(results)} bệnh nhân**: "
                             f"**{da_den}** đã đến khám (chắc chắn) · "
                             f"**{chua_den}** chưa đến khám · "
-                            f"**{nghi_ngo}** ca cần xác nhận tay."
+                            f"**{nghi_ngo}** ca cần xác nhận tay"
+                            + (f" · **{len(sot_list)}** ca nghi bị sót (tên giống nhưng ngoài cửa sổ ngày)."
+                               if sot_list else ".")
                         )
 
                         st.markdown(f"""
@@ -4045,6 +4092,71 @@ if st.session_state.metrics:
                                                     st.session_state.metrics = None
                             render_pagination_bar("pg_rec_review", rev_cur, rev_total, rev_start, rev_end, rev_tot,
                                                    widget_key="pg_rec_review_bottom")
+
+                        # ── Bước 4 — NGHI BỊ SÓT: bệnh nhân bị kết luận "chưa khám"
+                        # nhưng tìm thấy 1 lượt khám TÊN GIỐNG ở đâu đó trong file,
+                        # chỉ là NGOÀI cửa sổ ngày cho phép (đến quá sớm/quá muộn so
+                        # với hẹn, hoặc NGÀY KHÁM trên Sheet ghi sai) — rất đáng ngờ
+                        # là bị sót do cửa sổ quá hẹp chứ không phải thật sự chưa đến.
+                        if sot_list:
+                            st.markdown(
+                                '<div class="sh"><div class="sh-dot" style="background:#ef4444"></div>'
+                                '<span class="sh-txt">⚠️ Bước 4 — Nghi Bị Sót (tên giống, ngoài cửa sổ ngày)</span></div>',
+                                unsafe_allow_html=True
+                            )
+                            st.caption(
+                                f"{len(sot_list)} bệnh nhân bị đánh dấu \"chưa khám\" nhưng có 1 lượt khám TÊN GIỐNG "
+                                f"trong file — chỉ là ngày thực đến NẰM NGOÀI cửa sổ cho phép "
+                                f"[hẹn − {RECONCILE_WINDOW_BEFORE}, hẹn + {RECONCILE_WINDOW_AFTER}]. Xem kỹ rồi xác nhận "
+                                f"nếu đúng là cùng 1 người."
+                            )
+                            page_sot, sot_cur, sot_total, sot_start, sot_end, sot_tot = paginate_list(
+                                sot_list, "pg_rec_sot", page_size=5
+                            )
+                            render_pagination_bar("pg_rec_sot", sot_cur, sot_total, sot_start, sot_end, sot_tot,
+                                                   widget_key="pg_rec_sot_top")
+                            for r in page_sot:
+                                nm = r["near_miss"]
+                                v = nm["visit"]
+                                vd_str = nm["visit_date"].strftime("%d/%m/%Y") if nm["visit_date"] else (v.get("NGÀY ĐK") or "—")
+                                hen_str = r["exam_date"].strftime("%d/%m/%Y") if r["exam_date"] else "—"
+                                with st.expander(
+                                    f"⚠️ STT {r.get('stt', '') or '—'} · {r['name']}  ·  "
+                                    f"hẹn {hen_str}  ·  thực đến {vd_str} (ngoài cửa sổ)  ·  "
+                                    f"độ giống tên {nm['score']:.0f}%"
+                                ):
+                                    sA, sB = st.columns(2)
+                                    with sA:
+                                        st.markdown("**Trên Google Sheet (đã hẹn)**")
+                                        st.write(f"👤 {r['name']}")
+                                        st.write(f"📅 Ngày hẹn: {hen_str}")
+                                        st.write(f"📞 SĐT: {r.get('phone') or '—'}")
+                                        st.write(f"🎂 Năm sinh: {r.get('birth_year') or '—'}")
+                                    with sB:
+                                        st.markdown("**Lượt khám tìm thấy trong file (ngoài cửa sổ)**")
+                                        st.write(f"👤 {v.get('HỌ TÊN', '')}")
+                                        st.write(f"📅 Ngày thực đến: {vd_str}")
+                                        st.write(f"📞 SĐT lúc khám: {v.get('SỐ ĐIỆN THOẠI') or '—'}")
+                                        st.write(f"🎂 Năm sinh lúc khám: {v.get('NĂM SINH') or '—'}")
+                                        st.write(f"🏥 Khoa thực khám: {v.get('KHOA ĐK') or '—'}")
+                                    if st.button(
+                                        "✅ Đúng là người này — đánh dấu Đã khám",
+                                        key=f"confirm_sot_{r['sheet_row']}", use_container_width=True, type="primary"
+                                    ):
+                                        if not creds_data:
+                                            st.error("❌ Chưa có credentials.")
+                                        else:
+                                            n_ok3, err3 = update_patient_status_batch(
+                                                creds_data, SHEET_ID, SHEET_NAME,
+                                                [(r["sheet_row"], STATUS_ATTENDED, r.get("stt") or None)]
+                                            )
+                                            if err3:
+                                                st.error(f"❌ {err3}")
+                                            else:
+                                                st.success("✅ Đã đánh dấu Đã khám cho bệnh nhân này.")
+                                                st.session_state.metrics = None
+                            render_pagination_bar("pg_rec_sot", sot_cur, sot_total, sot_start, sot_end, sot_tot,
+                                                   widget_key="pg_rec_sot_bottom")
 
         with gtab_vl:
             st.markdown("""
