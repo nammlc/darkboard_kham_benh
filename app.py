@@ -602,6 +602,7 @@ div[class*="mrow_"] {
     padding:0.7rem 0.9rem;
     margin-bottom:0.6rem;
     box-shadow:0 1px 3px rgba(15,23,42,0.05);
+    overflow-x:hidden;
 }
 div[class*="mrow_"]:hover { border-color:#bfdbfe; background:#f8fbff; }
 div[class*="mrow_"][class*="_att"] { border-left-color:#10b981; }
@@ -2049,11 +2050,14 @@ def source_badge(src_val):
     if not s or s in ("nan",""):
         return ""
     if any(k in s.lower() for k in ["khoa","tái","nội trú","xuất viện","tai"]):
-        return f'<span class="pt-tag pt-tag-wrap src-noi">🏥 {s[:24]}</span>'
+        s_show = s[:24] + ("…" if len(s) > 24 else "")
+        return f'<span class="pt-tag pt-tag-wrap src-noi">🏥 {s_show}</span>'
     elif any(k in s.lower() for k in ["vãng lai","vang lai","ngoài","ngoai"]):
-        return f'<span class="pt-tag pt-tag-wrap src-vl">🚶 {s[:24]}</span>'
+        s_show = s[:24] + ("…" if len(s) > 24 else "")
+        return f'<span class="pt-tag pt-tag-wrap src-vl">🚶 {s_show}</span>'
     else:
-        return f'<span class="pt-tag pt-tag-wrap src-other">👤 {s[:24]}</span>'
+        s_show = s[:24] + ("…" if len(s) > 24 else "")
+        return f'<span class="pt-tag pt-tag-wrap src-other">👤 {s_show}</span>'
 
 def patient_card_html(row):
     name   = str(row.get(COL_NAME,"")      or "—")
@@ -2335,7 +2339,13 @@ def patient_row_info_html(row2):
     byr   = str(row2.get(COL_BIRTH_YEAR,"") or "—")
     phone = str(row2.get(COL_PHONE,"") or "—")
     etime = str(row2.get(COL_EXAM_TIME,"") or "—")
-    spec  = str(row2.get(COL_SPECIALTY,"") or "—")
+    spec_raw = str(row2.get(COL_SPECIALTY,"") or "").strip()
+    # Cột CHUYÊN KHOA của những bệnh nhân tái khám thường chỉ lưu lại đúng
+    # y hệt dòng "Other: <mô tả nguồn>" (do form Google chọn "Khác" nhưng
+    # không gõ gì thêm) — không mang thông tin gì mới so với badge nguồn
+    # bên cạnh, nên ẩn hẳn đi cho đỡ rối thay vì hiển thị lặp lại.
+    show_spec = bool(spec_raw) and not spec_raw.lower().startswith("other:") and not spec_raw.lower().startswith("other :")
+    spec = spec_raw
     src_raw = str(row2.get(COL_SOURCE,"") or "")
     src_badge = source_badge(src_raw)
     khoa_show = khoa_badge_html(row2.get(COL_KHOA,""))
@@ -2344,6 +2354,7 @@ def patient_row_info_html(row2):
         etime = etime[:5]
     if len(spec) > 30:
         spec = spec[:30] + "…"
+    spec_html = f'<span class="pt-tag pt-tag-wrap pt-tag-doc">🩺 {spec}</span>' if show_spec else ''
 
     if phone not in ("—","N/A","nan",""):
         tel_digits = "".join(ch for ch in phone if ch.isdigit() or ch == "+")
@@ -2364,7 +2375,7 @@ def patient_row_info_html(row2):
         '<span class="pt-tag pt-tag-spec">' + phone_show + '</span>'
         '</div>'
         '<div class="pt-row" style="margin:0.25rem 0 0">'
-        '<span class="pt-tag pt-tag-doc">🩺 ' + spec + '</span>'
+        + spec_html
         + khoa_show
         + (src_badge or '')
         + '</div>'
