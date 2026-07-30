@@ -586,6 +586,23 @@ div[class*="_curbtn"] .stButton>button:hover {
     cursor: default !important;
 }
 
+/* Mỗi HÀNG BỆNH NHÂN (tab "3 Ngày Tới" và các bảng dùng render_upcoming_table)
+   — đóng khung riêng từng người thành 1 "thẻ", có viền trái đổi màu theo
+   trạng thái (xanh = đã khám, đỏ = chưa khám), để phân vùng rõ ràng giữa các
+   bệnh nhân khi danh sách dài, thay vì các hàng dính liền khó tách bằng mắt. */
+div[class*="mrow_"] {
+    background:#ffffff;
+    border:1px solid #e6eaf1;
+    border-left:4px solid #cbd5e1;
+    border-radius:10px;
+    padding:0.7rem 0.9rem;
+    margin-bottom:0.6rem;
+    box-shadow:0 1px 3px rgba(15,23,42,0.05);
+}
+div[class*="mrow_"]:hover { border-color:#bfdbfe; background:#f8fbff; }
+div[class*="mrow_"][class*="_att"] { border-left-color:#10b981; }
+div[class*="mrow_"][class*="_nos"] { border-left-color:#ef4444; }
+
 /* == FORCE LIGHT MODE — disable dark theme == */
 .stApp { background:#f0f4f8 !important; color:#1e293b !important; }
 [data-testid="stAppViewContainer"] { background:#f0f4f8 !important; }
@@ -2442,7 +2459,7 @@ def render_upcoming_table(sub_df, empty_msg, dl_prefix, dl_key, page_state_key=N
         edit_open_key = f"inline_edit_open_{dl_key}_{sheet_row}"
         del_open_key = f"inline_del_open_{dl_key}_{sheet_row}"
 
-        with st.container(key=f"mrow_{dl_key}_{sheet_row}"):
+        with st.container(key=f"mrow_{dl_key}_{sheet_row}_{'att' if m_is_att else 'nos'}"):
             mc1, mc2, mc3, mc4 = st.columns([4.3, 1.5, 0.65, 0.65])
             with mc1:
                 st.markdown(info_html, unsafe_allow_html=True)
