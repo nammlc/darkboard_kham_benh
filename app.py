@@ -72,7 +72,20 @@ div[data-testid="stDecoration"],
 #MainMenu { display:none !important; }
 
 .stApp { background:#f0f4f8; }
-.main .block-container { padding:0 !important; max-width:100% !important; }
+
+/* Không cho overflow:hidden cắt mất tab bar fixed */
+.stApp,
+div[data-testid="stAppViewContainer"],
+div[data-testid="stMainBlockContainer"] {
+    overflow: visible !important;
+}
+
+/* block-container: bỏ padding ngang, giữ padding-top cho tab bar */
+.main .block-container {
+    padding-left: 0 !important;
+    padding-right: 0 !important;
+    max-width: 100% !important;
+}
 
 /* ── NAVBAR ── */
 .nb {
@@ -296,17 +309,29 @@ div[data-testid="stDecoration"],
 
 /* ── STREAMLIT OVERRIDES ── */
 
-/* Tab bar sticky — dính lên đầu trang khi cuộn (header Streamlit đã ẩn) */
+/* ── TAB BAR FIXED ─────────────────────────────────────────────────────────
+   position:sticky KHÔNG hoạt động vì Streamlit wrap app trong stAppViewContainer
+   có overflow:auto → sticky bị kẹt trong scrollable parent, không dính viewport.
+   Giải pháp đúng: position:fixed để luôn dính đầu màn hình.
+   Đồng thời thêm padding-top cho stMain để nội dung không bị tab bar che. */
+
 div[data-testid="stTabBar"] {
-    position: sticky !important;
+    position: fixed !important;
     top: 0 !important;
-    z-index: 990 !important;
+    left: 0 !important;
+    right: 0 !important;
+    z-index: 9999 !important;
     background: #ffffff !important;
     border-bottom: 2px solid #e2e8f0 !important;
-    box-shadow: 0 2px 10px rgba(15,23,42,0.09) !important;
-    padding: 0 0.5rem !important;
-    backdrop-filter: blur(6px) !important;
-    -webkit-backdrop-filter: blur(6px) !important;
+    box-shadow: 0 2px 10px rgba(15,23,42,0.10) !important;
+    padding: 0 1rem !important;
+}
+
+/* Đẩy toàn bộ nội dung xuống để không bị tab bar che (~48px) */
+div[data-testid="stMain"],
+section[data-testid="stMain"],
+.main .block-container {
+    padding-top: 3.2rem !important;
 }
 
 div[data-testid="stTabs"] button {
