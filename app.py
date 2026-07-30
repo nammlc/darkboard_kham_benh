@@ -233,14 +233,14 @@ button[data-testid="baseButton-headerNoPadding"] { display:none !important; }
     box-shadow:0 1px 4px rgba(0,0,0,0.05);
 }
 .pt-name { font-size:0.9rem; font-weight:700; color:#0f172a; margin-bottom:0.3rem; }
-.pt-row  { display:flex; flex-wrap:wrap; gap:0.3rem 0.8rem; margin-bottom:0.25rem; }
+.pt-row  { display:flex; flex-wrap:wrap; align-items:center; gap:0.45rem 0.5rem; margin-bottom:0.35rem; }
 .pt-tag  {
-    font-size:0.68rem; font-weight:600; padding:0.2rem 0.55rem;
-    border-radius:20px; white-space:nowrap;
+    font-size:0.74rem; font-weight:600; padding:0.28rem 0.65rem;
+    border-radius:20px; white-space:nowrap; line-height:1.35;
 }
 .pt-tag-wrap {
-    white-space:normal !important; line-height:1.3; max-width:100%;
-    word-break:break-word;
+    white-space:normal !important; line-height:1.35; max-width:100%;
+    word-break:break-word; flex-basis:100%;
 }
 .pt-tag-date  { background:#eff6ff; color:#1d4ed8; }
 .pt-tag-spec  { background:#f0fdf4; color:#166534; }
@@ -392,8 +392,8 @@ div[data-testid="stDownloadButton"] button {
 
 /* Badge Khoa trong bảng chi tiết */
 .khoa-badge {
-    font-size:0.62rem; font-weight:600; padding:0.2rem 0.55rem;
-    border-radius:20px; white-space:normal; display:inline-block;
+    font-size:0.72rem; font-weight:600; padding:0.28rem 0.65rem;
+    border-radius:20px; white-space:normal; display:inline-block; line-height:1.35;
 }
 .khoa-kb   { background:#eff6ff; color:#1d4ed8; }
 .khoa-khac { background:#ede9fe; color:#5b21b6; }
@@ -599,8 +599,8 @@ div[class*="mrow_"] {
     border:1px solid #e6eaf1;
     border-left:4px solid #cbd5e1;
     border-radius:10px;
-    padding:0.7rem 0.9rem;
-    margin-bottom:0.6rem;
+    padding:0.85rem 1rem;
+    margin-bottom:0.7rem;
     box-shadow:0 1px 3px rgba(15,23,42,0.05);
     overflow-x:hidden;
 }
@@ -2050,14 +2050,11 @@ def source_badge(src_val):
     if not s or s in ("nan",""):
         return ""
     if any(k in s.lower() for k in ["khoa","tái","nội trú","xuất viện","tai"]):
-        s_show = s[:24] + ("…" if len(s) > 24 else "")
-        return f'<span class="pt-tag pt-tag-wrap src-noi">🏥 {s_show}</span>'
+        return f'<span class="pt-tag pt-tag-wrap src-noi">🏥 {s}</span>'
     elif any(k in s.lower() for k in ["vãng lai","vang lai","ngoài","ngoai"]):
-        s_show = s[:24] + ("…" if len(s) > 24 else "")
-        return f'<span class="pt-tag pt-tag-wrap src-vl">🚶 {s_show}</span>'
+        return f'<span class="pt-tag pt-tag-wrap src-vl">🚶 {s}</span>'
     else:
-        s_show = s[:24] + ("…" if len(s) > 24 else "")
-        return f'<span class="pt-tag pt-tag-wrap src-other">👤 {s_show}</span>'
+        return f'<span class="pt-tag pt-tag-wrap src-other">👤 {s}</span>'
 
 def patient_card_html(row):
     name   = str(row.get(COL_NAME,"")      or "—")
