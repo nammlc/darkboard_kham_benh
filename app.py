@@ -3043,184 +3043,130 @@ if st.session_state.metrics:
             unsafe_allow_html=True,
         )
 
-        # ── Init session state cho tracking gọi điện ──────────────────────
-        if "remind_call_status" not in st.session_state:
-            st.session_state["remind_call_status"] = {}   # key=row_id: "called"|"no_answer"|""
-        if "remind_call_note" not in st.session_state:
-            st.session_state["remind_call_note"]   = {}   # key=row_id: str
-
+        # 3 ngày trước hôm nay (không gồm hôm nay)
         past_dates = [today - timedelta(days=i) for i in range(1, 4)]
-        df_full    = m.get("df_full", df)
+        df_full = m.get("df_full", df)
 
         if "_date" not in df_full.columns or not df_full["_date"].notna().any():
             st.info("Chưa có dữ liệu ngày khám.")
         else:
-            mask_past = df_full["_date"].dt.date.isin(past_dates)
-            mask_nos  = ~(
+            # Lọc bệnh nhân trong 3 ngày qua VÀ chưa đến khám
+            mask_past  = df_full["_date"].dt.date.isin(past_dates)
+            mask_nos   = ~(
                 df_full[COL_STATUS].astype(str).str.upper()
                 .str.contains(STATUS_ATTENDED.upper(), na=False)
             )
-            df_remind = df_full[mask_past & mask_nos].copy()
+            df_remind  = df_full[mask_past & mask_nos].copy()
 
-            # Ưu tiên bệnh nhân có SĐT lên đầu
-            def _has_phone(p):
-                return str(p).strip() not in ["", "0", "nan", "N/A", "—"]
-            df_remind["_has_phone"] = df_remind[COL_PHONE].apply(_has_phone)
-            df_remind = df_remind.sort_values(
-                ["_date", "_has_phone"], ascending=[False, False]
-            )
-
+            # Tổng KPI
             total_remind = len(df_remind)
-            n_has_phone  = int(df_remind["_has_phone"].sum())
+            has_phone    = df_remind[COL_PHONE].astype(str).str.strip()
+            has_phone    = has_phone[~has_phone.isin(["", "0", "nan", "N/A", "—"])]
+            n_has_phone  = len(has_phone)
             n_no_phone   = total_remind - n_has_phone
 
-            # Tracking stats từ session_state
-            cs = st.session_state["remind_call_status"]
-            n_called    = sum(1 for v in cs.values() if v == "called")
-            n_no_ans    = sum(1 for v in cs.values() if v == "no_answer")
-            n_remaining = total_remind - n_called - n_no_ans
-            pct_called  = round(n_called / total_remind * 100) if total_remind > 0 else 0
-
-            # ── KPI row ─────────────────────────────────────────────────────
             st.markdown(f"""
-            <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:0.5rem;margin:0.5rem 0 0.9rem">
-              <div class="kc kc-r" style="padding:0.7rem 0.8rem">
+            <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:0.6rem;margin:0.5rem 0 1rem">
+              <div class="kc kc-r" style="padding:0.8rem 1rem">
                 <div class="kc-lbl">Tổng Cần Nhắc</div>
-                <div class="kc-val" style="font-size:1.6rem;color:#dc2626">{total_remind}</div>
+                <div class="kc-val" style="font-size:1.9rem;color:#dc2626">{total_remind}</div>
+                <div style="font-size:0.68rem;color:#94a3b8">trong 3 ngày qua</div>
               </div>
-              <div class="kc kc-g" style="padding:0.7rem 0.8rem">
-                <div class="kc-lbl">Có SĐT</div>
-                <div class="kc-val" style="font-size:1.6rem;color:#059669">{n_has_phone}</div>
+              <div class="kc kc-g" style="padding:0.8rem 1rem">
+                <div class="kc-lbl">Có Số Điện Thoại</div>
+                <div class="kc-val" style="font-size:1.9rem;color:#059669">{n_has_phone}</div>
+                <div style="font-size:0.68rem;color:#94a3b8">gọi được ngay</div>
               </div>
-              <div class="kc" style="padding:0.7rem 0.8rem;background:#fafbfc;border:1px solid #e2e8f0;border-radius:12px">
-                <div class="kc-lbl">Không SĐT</div>
-                <div class="kc-val" style="font-size:1.6rem;color:#f59e0b">{n_no_phone}</div>
-              </div>
-              <div class="kc kc-g" style="padding:0.7rem 0.8rem">
-                <div class="kc-lbl">Đã Gọi</div>
-                <div class="kc-val" style="font-size:1.6rem;color:#2563eb">{n_called} <span style="font-size:0.9rem;color:#64748b">({pct_called}%)</span></div>
-              </div>
-              <div class="kc" style="padding:0.7rem 0.8rem;background:#fff7ed;border:1px solid #fed7aa;border-radius:12px">
-                <div class="kc-lbl">Chưa Gọi</div>
-                <div class="kc-val" style="font-size:1.6rem;color:#ea580c">{n_remaining}</div>
+              <div class="kc" style="padding:0.8rem 1rem;background:#fafbfc;border:1px solid #e2e8f0;border-radius:12px">
+                <div class="kc-lbl">Không Có SĐT</div>
+                <div class="kc-val" style="font-size:1.9rem;color:#f59e0b">{n_no_phone}</div>
+                <div style="font-size:0.68rem;color:#94a3b8">cần tra thêm</div>
               </div>
             </div>
             """, unsafe_allow_html=True)
 
-            # Progress bar gọi điện
-            if total_remind > 0:
-                st.progress(n_called / total_remind,
-                            text=f"Tiến độ gọi nhắc: {n_called}/{total_remind} ({pct_called}%)")
-
             if total_remind == 0:
                 st.success("✅ Tất cả bệnh nhân trong 3 ngày qua đã đến khám!")
             else:
-                # ── Bộ lọc ──────────────────────────────────────────────────
-                fc1, fc2, fc3 = st.columns([1.2, 1.2, 1])
-                with fc1:
-                    date_opts = ["Tất cả ngày"] + [
+                # Bộ lọc theo ngày + khoa
+                filter_col1, filter_col2 = st.columns([1, 1])
+
+                with filter_col1:
+                    date_options = ["Tất cả ngày"] + [
                         d.strftime("%d/%m/%Y") for d in sorted(past_dates, reverse=True)
                         if d in df_remind["_date"].dt.date.unique()
                     ]
-                    sel_date = st.selectbox("📅 Ngày:", date_opts, key="remind_date_sel")
-                with fc2:
+                    sel_date = st.selectbox("📅 Lọc theo ngày:", date_options, key="remind_date_sel")
+
+                with filter_col2:
                     khoa_list = sorted(
                         df_remind[COL_KHOA].dropna().astype(str).str.strip()
                         .replace("", pd.NA).dropna().unique().tolist()
                     ) if COL_KHOA in df_remind.columns else []
-                    sel_khoa_r = st.selectbox("🏥 Khoa:", ["Tất cả khoa"] + khoa_list,
-                                               key="remind_khoa_sel")
-                with fc3:
-                    call_filter_opts = ["Tất cả", "Chưa gọi", "Đã gọi", "Không bắt máy"]
-                    sel_call = st.selectbox("📞 Trạng thái:", call_filter_opts,
-                                            key="remind_call_filter")
+                    khoa_options = ["Tất cả khoa"] + khoa_list
+                    sel_khoa_r = st.selectbox("🏥 Lọc theo khoa:", khoa_options, key="remind_khoa_sel")
 
                 # Áp dụng filter
                 df_filtered = df_remind.copy()
                 if sel_date != "Tất cả ngày":
-                    sd_obj = datetime.strptime(sel_date, "%d/%m/%Y").date()
-                    df_filtered = df_filtered[df_filtered["_date"].dt.date == sd_obj]
+                    sel_date_obj = datetime.strptime(sel_date, "%d/%m/%Y").date()
+                    df_filtered = df_filtered[df_filtered["_date"].dt.date == sel_date_obj]
                 if sel_khoa_r != "Tất cả khoa" and COL_KHOA in df_filtered.columns:
                     df_filtered = df_filtered[
                         df_filtered[COL_KHOA].astype(str).str.strip() == sel_khoa_r
                     ]
-                if sel_call != "Tất cả":
-                    map_call = {"Chưa gọi": "", "Đã gọi": "called", "Không bắt máy": "no_answer"}
-                    target_st = map_call[sel_call]
-                    df_filtered = df_filtered[
-                        df_filtered.index.map(lambda i: cs.get(str(i), "") == target_st)
-                    ]
 
-                st.caption(f"Hiển thị {len(df_filtered)} / {total_remind} bệnh nhân")
+                st.caption(f"Hiển thị {len(df_filtered)} / {total_remind} bệnh nhân cần nhắc")
 
-                # ── Nút Reset tracking (nhỏ, nằm bên phải) ─────────────────
-                _, reset_col = st.columns([5, 1])
-                with reset_col:
-                    if st.button("🔄 Reset", key="remind_reset", help="Xoá toàn bộ trạng thái gọi"):
-                        st.session_state["remind_call_status"] = {}
-                        st.session_state["remind_call_note"]   = {}
-                        st.rerun()
-
-                # ── Danh sách từng ngày ──────────────────────────────────────
-                vn_days = ["Thứ Hai","Thứ Ba","Thứ Tư","Thứ Năm","Thứ Sáu","Thứ Bảy","Chủ Nhật"]
-
+                # Hiển thị từng ngày trong 3 ngày qua
                 for past_d in sorted(past_dates, reverse=True):
                     day_df = df_filtered[df_filtered["_date"].dt.date == past_d]
                     if day_df.empty:
                         continue
 
-                    day_label    = f"{vn_days[past_d.weekday()]} · {past_d.strftime('%d/%m/%Y')}"
-                    n_day        = len(day_df)
-                    n_day_phone  = int(day_df["_has_phone"].sum())
-                    n_day_called = sum(1 for i in day_df.index if cs.get(str(i),"") == "called")
+                    vn_days = ["Thứ Hai","Thứ Ba","Thứ Tư","Thứ Năm","Thứ Sáu","Thứ Bảy","Chủ Nhật"]
+                    day_label = f"{vn_days[past_d.weekday()]} · {past_d.strftime('%d/%m/%Y')}"
+                    n_day = len(day_df)
+                    n_day_phone = day_df[COL_PHONE].astype(str).str.strip().apply(
+                        lambda x: x not in ["", "0", "nan", "N/A", "—"]
+                    ).sum()
 
                     st.markdown(
                         f'<div class="mrow-section-hd">'
                         f'📅 {day_label} &nbsp;·&nbsp; '
                         f'<span style="color:#dc2626;font-weight:700">{n_day} chưa đến</span>'
-                        f' &nbsp;·&nbsp; '
+                        f'&nbsp;·&nbsp; '
                         f'<span style="color:#059669">{n_day_phone} có SĐT</span>'
-                        f' &nbsp;·&nbsp; '
-                        f'<span style="color:#2563eb">{n_day_called} đã gọi</span>'
                         f'</div>',
                         unsafe_allow_html=True,
                     )
 
-                    for row_idx, row in day_df.iterrows():
-                        rid       = str(row_idx)
-                        r_name    = str(row.get(COL_NAME,   "") or "—")
-                        r_phone   = str(row.get(COL_PHONE,  "") or "")
-                        r_byr     = str(row.get(COL_BIRTH_YEAR, "") or "")
-                        r_khoa    = str(row.get(COL_KHOA,   "") or "")
-                        r_src     = str(row.get(COL_SOURCE, "") or "")
-                        r_time    = str(row.get(COL_EXAM_TIME, "") or "")
+                    # Card từng bệnh nhân — dạng compact có nút gọi điện
+                    for _, row in day_df.iterrows():
+                        r_name   = str(row.get(COL_NAME,   "") or "—")
+                        r_phone  = str(row.get(COL_PHONE,  "") or "")
+                        r_byr    = str(row.get(COL_BIRTH_YEAR, "") or "")
+                        r_khoa   = str(row.get(COL_KHOA,   "") or "")
+                        r_src    = str(row.get(COL_SOURCE, "") or "")
+                        r_status = str(row.get(COL_STATUS, "") or "")
+                        r_time   = str(row.get(COL_EXAM_TIME, "") or "")
                         if len(r_time) >= 5 and ":" in r_time:
                             r_time = r_time[:5]
 
-                        call_st   = cs.get(rid, "")
-                        has_tel   = row["_has_phone"]
+                        has_tel   = r_phone.strip() not in ["", "0", "nan", "N/A", "—"]
                         tel_clean = "".join(c for c in r_phone if c.isdigit() or c == "+")
-
-                        # Màu viền trái theo trạng thái gọi
-                        border_color = (
-                            "#10b981" if call_st == "called"
-                            else "#f59e0b" if call_st == "no_answer"
-                            else "#ef4444"
+                        phone_html = (
+                            f'<a href="tel:{tel_clean}" style="'
+                            f'color:#fff;background:#059669;padding:0.18rem 0.55rem;'
+                            f'border-radius:6px;font-size:0.7rem;font-weight:700;'
+                            f'text-decoration:none;white-space:nowrap">📞 {r_phone}</a>'
+                            if has_tel else
+                            '<span style="color:#94a3b8;font-size:0.7rem">📞 Không có SĐT</span>'
                         )
 
-                        # HTML badge SĐT / trạng thái gọi
-                        if has_tel:
-                            phone_html = (
-                                f'<a href="tel:{tel_clean}" style="'
-                                f'color:#fff;background:#059669;padding:0.2rem 0.6rem;'
-                                f'border-radius:6px;font-size:0.7rem;font-weight:700;'
-                                f'text-decoration:none;white-space:nowrap">📞 {r_phone}</a>'
-                            )
-                        else:
-                            phone_html = '<span style="color:#94a3b8;font-size:0.7rem;white-space:nowrap">📞 Không có SĐT</span>'
-
                         khoa_html = (
-                            f'<span class="pt-tag pt-tag-doc" style="font-size:0.67rem">{r_khoa[:28]}</span>'
+                            f'<span class="pt-tag pt-tag-doc" style="font-size:0.67rem">'
+                            f'{r_khoa[:28]}</span>'
                             if r_khoa.strip() and r_khoa not in ["nan","N/A","—"] else ""
                         )
                         src_html  = source_badge(r_src) or ""
@@ -3233,84 +3179,42 @@ if st.session_state.metrics:
                             if r_byr and r_byr not in ["","—","N/A","nan"] else ""
                         )
 
-                        # Badge trạng thái gọi
-                        call_badge = {
-                            "called":    '<span style="background:#d1fae5;color:#065f46;font-size:0.62rem;font-weight:700;padding:0.15rem 0.45rem;border-radius:10px">✅ Đã gọi</span>',
-                            "no_answer": '<span style="background:#fef3c7;color:#92400e;font-size:0.62rem;font-weight:700;padding:0.15rem 0.45rem;border-radius:10px">📵 Không bắt máy</span>',
-                            "":          '<span style="background:#fee2e2;color:#991b1b;font-size:0.62rem;font-weight:700;padding:0.15rem 0.45rem;border-radius:10px">⏳ Chưa gọi</span>',
-                        }.get(call_st, "")
-
-                        note_val = st.session_state["remind_call_note"].get(rid, "")
-
                         st.markdown(f"""
-                        <div style="background:#fff;border:1px solid #e2e8f0;
-                            border-left:4px solid {border_color};border-radius:11px;
-                            padding:0.55rem 0.8rem 0.45rem;margin-bottom:0.4rem;
-                            box-shadow:0 1px 4px rgba(15,23,42,0.05)">
-                          <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:0.3rem;margin-bottom:0.3rem">
-                            <div style="font-size:0.85rem;font-weight:700;color:#0f172a">👤 {r_name}</div>
-                            <div style="display:flex;gap:0.35rem;align-items:center;flex-wrap:wrap">
-                              {call_badge} {phone_html}
+                        <div style="
+                            background:#fff;border:1px solid #e2e8f0;
+                            border-left:4px solid #ef4444;border-radius:11px;
+                            padding:0.6rem 0.85rem;margin-bottom:0.45rem;
+                            box-shadow:0 1px 4px rgba(15,23,42,0.05);
+                            display:flex;align-items:center;justify-content:space-between;
+                            flex-wrap:wrap;gap:0.4rem;
+                        ">
+                          <div style="flex:1;min-width:180px">
+                            <div style="font-size:0.85rem;font-weight:700;color:#0f172a;margin-bottom:0.2rem">
+                              👤 {r_name}
+                            </div>
+                            <div style="display:flex;flex-wrap:wrap;gap:0.3rem;align-items:center">
+                              {time_html}{byr_html}{khoa_html}{src_html}
                             </div>
                           </div>
-                          <div style="display:flex;flex-wrap:wrap;gap:0.28rem;align-items:center">
-                            {time_html}{byr_html}{khoa_html}{src_html}
+                          <div style="flex-shrink:0">
+                            {phone_html}
                           </div>
                         </div>
                         """, unsafe_allow_html=True)
 
-                        # ── Nút tracking + ghi chú ───────────────────────────
-                        btn1, btn2, btn3 = st.columns([1, 1, 3])
-                        with btn1:
-                            if st.button(
-                                "✅ Đã gọi" if call_st != "called" else "↩️ Bỏ đã gọi",
-                                key=f"remind_called_{rid}",
-                                use_container_width=True,
-                            ):
-                                cs[rid] = "" if call_st == "called" else "called"
-                                st.rerun()
-                        with btn2:
-                            if st.button(
-                                "📵 Không bắt" if call_st != "no_answer" else "↩️ Bỏ",
-                                key=f"remind_noans_{rid}",
-                                use_container_width=True,
-                            ):
-                                cs[rid] = "" if call_st == "no_answer" else "no_answer"
-                                st.rerun()
-                        with btn3:
-                            note_new = st.text_input(
-                                "Ghi chú:",
-                                value=note_val,
-                                placeholder="Nhập ghi chú sau khi gọi...",
-                                key=f"remind_note_{rid}",
-                                label_visibility="collapsed",
-                            )
-                            if note_new != note_val:
-                                st.session_state["remind_call_note"][rid] = note_new
-
-                # ── Nút tải CSV ─────────────────────────────────────────────
+                # Nút tải CSV danh sách cần nhắc
                 remind_cols = [col for col in [
                     COL_NAME, COL_EXAM_DATE, COL_EXAM_TIME,
-                    COL_PHONE, COL_KHOA, COL_SOURCE, COL_STATUS,
+                    COL_PHONE, COL_KHOA, COL_SOURCE, COL_STATUS
                 ] if col in df_filtered.columns]
-                export_df = df_filtered[remind_cols].copy()
-                export_df["TRẠNG THÁI GỌI"] = [
-                    {"called": "Đã gọi", "no_answer": "Không bắt máy"}.get(
-                        cs.get(str(i), ""), "Chưa gọi"
-                    ) for i in df_filtered.index
-                ]
-                export_df["GHI CHÚ"] = [
-                    st.session_state["remind_call_note"].get(str(i), "")
-                    for i in df_filtered.index
-                ]
-                csv_remind = export_df.to_csv(index=False, encoding="utf-8-sig")
+                csv_remind = df_filtered[remind_cols].to_csv(index=False, encoding="utf-8-sig")
                 fname_remind = (
-                    f"nhac_lich_{sel_date.replace('/','')}.csv"
+                    f"nhac_lich_{sel_date.replace('/','')}_{today.strftime('%Y%m%d')}.csv"
                     if sel_date != "Tất cả ngày"
                     else f"nhac_lich_3ngay_{today.strftime('%Y%m%d')}.csv"
                 )
                 st.download_button(
-                    label="⬇️ Xuất danh sách nhắc lịch (.csv)",
+                    label=f"⬇️ Tải danh sách nhắc lịch (.csv)",
                     data=csv_remind.encode("utf-8-sig"),
                     file_name=fname_remind,
                     mime="text/csv",
