@@ -245,6 +245,15 @@ button[data-testid="baseButton-headerNoPadding"] { display:none !important; }
 .pt-tag-date  { background:#eff6ff; color:#1d4ed8; }
 .pt-tag-spec  { background:#f0fdf4; color:#166534; }
 .pt-tag-doc   { background:#fdf4ff; color:#6b21a8; }
+.src-banner {
+    display:flex; align-items:center; gap:0.45rem;
+    font-size:0.74rem; font-weight:600; line-height:1.35;
+    padding:0.45rem 0.75rem; border-radius:8px; margin-top:0.45rem;
+}
+.src-banner .sb-ico { font-size:0.9rem; flex-shrink:0; }
+.src-banner-noi   { background:#f5f3ff; color:#5b21b6; border:1px solid #ddd6fe; }
+.src-banner-vl    { background:#fffbeb; color:#92400e; border:1px solid #fde68a; }
+.src-banner-other { background:#f8fafc; color:#475569; border:1px solid #e2e8f0; }
 .pt-status-att { background:#d1fae5; color:#065f46; }
 .pt-status-nos { background:#fee2e2; color:#991b1b; }
 .pt-status-oth { background:#f1f5f9; color:#475569; }
@@ -416,15 +425,6 @@ div[data-testid="stDownloadButton"] button {
     background:#f8fafc; border:1px solid #e2e8f0; border-radius:10px;
     padding:0.55rem 0.9rem;
 }
-div[class*="_mrow_"] {
-    background:white; border:1px solid #e2e8f0; border-radius:12px;
-    padding:0.55rem 0.65rem; margin-bottom:0.5rem;
-    box-shadow:0 1px 3px rgba(0,0,0,0.05);
-    transition:box-shadow 0.15s;
-}
-div[class*="_mrow_"]:hover { box-shadow:0 3px 10px rgba(0,0,0,0.08); }
-/* Giữ mọi thứ (tên, badge, 2 nút icon) trên CÙNG 1 HÀNG NGANG */
-div[class*="_mrow_"] div[data-testid="stHorizontalBlock"] { align-items:center; gap:0.35rem; flex-wrap:nowrap; }
 .mrow-info { display:flex; flex-direction:column; gap:0.15rem; min-width:0; }
 .mrow-name { font-size:0.82rem; font-weight:700; color:#0f172a; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 .mrow-sub  { font-size:0.68rem; color:#64748b; font-family:'JetBrains Mono',monospace !important; }
@@ -434,7 +434,7 @@ div[class*="_mrow_"] div[data-testid="stHorizontalBlock"] { align-items:center; 
 }
 .mrow-badge-att { background:#d1fae5; color:#065f46; }
 .mrow-badge-nos { background:#fee2e2; color:#991b1b; }
-.mrow-status-wrap { display:flex; align-items:center; justify-content:center; height:100%; padding:0.1rem 0; }
+.mrow-status-wrap { display:flex; align-items:flex-start; justify-content:center; padding-top:0.1rem; }
 .mrow-status-wrap .mrow-badge { text-align:center; white-space:normal; line-height:1.25; }
 
 /* Nút "✏️" / "🗑️" — chỉ icon, vuông nhỏ gọn, nằm cùng hàng với thông tin */
@@ -607,6 +607,13 @@ div[class*="mrow_"] {
 div[class*="mrow_"]:hover { border-color:#bfdbfe; background:#f8fbff; }
 div[class*="mrow_"][class*="_att"] { border-left-color:#10b981; }
 div[class*="mrow_"][class*="_nos"] { border-left-color:#ef4444; }
+/* Giữ NHÃN TRẠNG THÁI + 2 nút ✏️/🗑️ NEO SÁT TRÊN (ngang hàng với tên bệnh
+   nhân) thay vì bị canh giữa theo chiều dọc — vì cột thông tin bên trái
+   (tên + các dòng badge + banner nguồn) ngày càng dài, canh giữa sẽ làm
+   nút trông lọt thỏm/lệch tâm so với phần trên cùng. */
+div[class*="mrow_"] div[data-testid="stHorizontalBlock"] {
+    align-items:flex-start !important; gap:0.5rem; flex-wrap:nowrap;
+}
 
 /* == FORCE LIGHT MODE — disable dark theme == */
 .stApp { background:#f0f4f8 !important; color:#1e293b !important; }
@@ -2325,6 +2332,25 @@ def khoa_badge_html(khoa_val):
     label = s if len(s) <= 32 else s[:32] + "…"
     return f'<span class="khoa-badge {cls}">{label}</span>'
 
+def source_banner_html(src_val):
+    """
+    Dòng NGUỒN BỆNH NHÂN dạng thanh ngang gọn gàng (không phải pill kéo dài
+    hết chiều ngang trông kỳ) — dùng riêng cho patient_row_info_html (tab
+    "3 Ngày Tới"), tách hẳn khỏi hàng badge ngắn (khoa/chuyên khoa) để dễ
+    đọc và không bị chật.
+    """
+    s = str(src_val).strip()
+    if not s or s in ("nan", ""):
+        return ""
+    if any(k in s.lower() for k in ["khoa", "tái", "nội trú", "xuất viện", "tai"]):
+        cls, ico = "src-banner-noi", "🏥"
+    elif any(k in s.lower() for k in ["vãng lai", "vang lai", "ngoài", "ngoai"]):
+        cls, ico = "src-banner-vl", "🚶"
+    else:
+        cls, ico = "src-banner-other", "👤"
+    return f'<div class="src-banner {cls}"><span class="sb-ico">{ico}</span><span>{s}</span></div>'
+
+
 def patient_row_info_html(row2):
     """
     Dựng khối thông tin (tên + các thẻ chi tiết) cho MỘT bệnh nhân, dùng làm
@@ -2344,7 +2370,7 @@ def patient_row_info_html(row2):
     show_spec = bool(spec_raw) and not spec_raw.lower().startswith("other:") and not spec_raw.lower().startswith("other :")
     spec = spec_raw
     src_raw = str(row2.get(COL_SOURCE,"") or "")
-    src_badge = source_badge(src_raw)
+    src_banner = source_banner_html(src_raw)
     khoa_show = khoa_badge_html(row2.get(COL_KHOA,""))
 
     if len(etime) >= 5 and ":" in etime:
@@ -2371,12 +2397,10 @@ def patient_row_info_html(row2):
         '<span class="pt-tag pt-tag-spec">🎂 ' + byr + '</span>'
         '<span class="pt-tag pt-tag-spec">' + phone_show + '</span>'
         '</div>'
-        '<div class="pt-row" style="margin:0.25rem 0 0">'
-        + spec_html
-        + khoa_show
-        + (src_badge or '')
+        + (('<div class="pt-row" style="margin:0.25rem 0 0">' + spec_html + khoa_show + '</div>')
+           if (spec_html or khoa_show) else '')
+        + src_banner
         + '</div>'
-        '</div>'
     )
 
 def render_upcoming_table(sub_df, empty_msg, dl_prefix, dl_key, page_state_key=None):
@@ -3186,7 +3210,17 @@ if st.session_state.metrics:
                         unsafe_allow_html=True,
                     )
 
-                    for row_idx, row in day_df.iterrows():
+                    # ── Phân trang danh sách bệnh nhân trong ngày này — tránh dồn
+                    # hết 1 lần khi 1 ngày có nhiều bệnh nhân chưa đến khám. ──
+                    day_key = f"pg_remind_{past_d.isoformat()}"
+                    day_items = list(day_df.iterrows())
+                    page_items, rmd_cur, rmd_total, rmd_start, rmd_end, rmd_tot = paginate_list(
+                        day_items, day_key
+                    )
+                    render_pagination_bar(day_key, rmd_cur, rmd_total, rmd_start, rmd_end, rmd_tot,
+                                          widget_key=f"{day_key}_top")
+
+                    for row_idx, row in page_items:
                         rid       = str(row_idx)
                         r_name    = str(row.get(COL_NAME,   "") or "—")
                         r_phone   = str(row.get(COL_PHONE,  "") or "")
@@ -3287,6 +3321,9 @@ if st.session_state.metrics:
                             )
                             if note_new != note_val:
                                 st.session_state["remind_call_note"][rid] = note_new
+
+                    render_pagination_bar(day_key, rmd_cur, rmd_total, rmd_start, rmd_end, rmd_tot,
+                                          widget_key=f"{day_key}_bottom")
 
                 # ── Nút tải CSV ─────────────────────────────────────────────
                 remind_cols = [col for col in [
