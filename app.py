@@ -259,6 +259,16 @@ button[data-testid="baseButton-headerNoPadding"] { display:none !important; }
     font-size:0.68rem; font-weight:700;
     text-transform:uppercase; letter-spacing:0.06em; white-space:nowrap;
 }
+.rtbl th.grp-hdr { text-align:center; font-size:0.72rem; }
+.rtbl th.grp-att { background:#14532d; }
+.rtbl th.grp-abs { background:#7f1d1d; }
+.rtbl th.sub-att { background:#1e5c3a; text-align:center; }
+.rtbl th.sub-abs { background:#8a2a2a; text-align:center; }
+.rtbl th.divider-l, .rtbl td.divider-l { border-left:2px solid #cbd5e1; }
+.rtbl td.col-att { background:#f0fdf4; }
+.rtbl td.col-abs { background:#fef2f2; }
+.rtbl tr:nth-child(even) td.col-att { background:#e6faec; }
+.rtbl tr:nth-child(even) td.col-abs { background:#fde8e8; }
 .rtbl td { padding:0.55rem 0.8rem; color:#1e293b;
            border-bottom:1px solid #f1f5f9; }
 .rtbl tr:nth-child(even) td { background:#f8fafc; }
@@ -591,6 +601,10 @@ button[kind="header"] { display:none !important; }
 .src-card-sub { color: #94a3b8 !important; }
 .rtbl td { color: #1e293b !important; background: white !important; }
 .rtbl tr:nth-child(even) td { background: #f8fafc !important; }
+.rtbl td.col-att { background: #f0fdf4 !important; }
+.rtbl td.col-abs { background: #fef2f2 !important; }
+.rtbl tr:nth-child(even) td.col-att { background: #e6faec !important; }
+.rtbl tr:nth-child(even) td.col-abs { background: #fde8e8 !important; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -1984,6 +1998,7 @@ def build_stats(df, period):
     elif period=="Tháng":    d["Kỳ"] = d["_date"].dt.strftime("Tháng %m/%Y")
     elif period=="Quý":      d["Kỳ"] = d["_date"].apply(lambda x: f"Q{((x.month-1)//3)+1}/{x.year}")
     elif period=="Năm":      d["Kỳ"] = d["_date"].dt.strftime("Năm %Y")
+
     d["_att"] = d[COL_STATUS].astype(str).str.upper() == STATUS_ATTENDED.upper()
     if COL_SOURCE in d.columns:
         src_vals = d[COL_SOURCE].astype(str)
@@ -3398,29 +3413,29 @@ if st.session_state.metrics:
                 r_cls = "pct-r" if row["Tỷ lệ vắng (%)"]>=50 else "pct-g"
                 rows_html += f"""<tr>
                   <td>{row['Kỳ']}</td>
-                  <td class="num">{int(row['Đăng ký'])}</td>
-                  <td class="num" style="color:#059669">{int(row['Đến - Tái Khám'])}</td>
-                  <td class="num" style="color:#059669">{int(row['Đến - Vãng Lai'])}</td>
-                  <td class="num" style="color:#dc2626">{int(row['Vắng - Tái Khám'])}</td>
-                  <td class="num" style="color:#dc2626">{int(row['Vắng - Vãng Lai'])}</td>
-                  <td class="num" style="color:#059669;font-weight:700">{int(row['Đã khám'])}</td>
+                  <td class="num divider-l">{int(row['Đăng ký'])}</td>
+                  <td class="num col-att divider-l">{int(row['Đến - Tái Khám'])}</td>
+                  <td class="num col-att">{int(row['Đến - Vãng Lai'])}</td>
+                  <td class="num col-abs divider-l">{int(row['Vắng - Tái Khám'])}</td>
+                  <td class="num col-abs">{int(row['Vắng - Vãng Lai'])}</td>
+                  <td class="num divider-l" style="color:#059669;font-weight:700">{int(row['Đã khám'])}</td>
                   <td class="num" style="color:#dc2626;font-weight:700">{int(row['Vắng / Chưa'])}</td>
-                  <td class="{g_cls}">{row['Tỷ lệ đến (%)']}%</td>
+                  <td class="{g_cls} divider-l">{row['Tỷ lệ đến (%)']}%</td>
                   <td class="{r_cls}">{row['Tỷ lệ vắng (%)']}%</td>
                 </tr>"""
             st.markdown(f"""
             <div class="rtbl-wrap">
               <table class="rtbl"><thead>
                 <tr>
-                  <th rowspan="2">Kỳ</th><th rowspan="2">Tổng</th>
-                  <th colspan="2">Đến Khám</th>
-                  <th colspan="2">Vắng</th>
-                  <th rowspan="2">Tổng Đến</th><th rowspan="2">Tổng Vắng</th>
-                  <th rowspan="2">% Đến</th><th rowspan="2">% Vắng</th>
+                  <th rowspan="2">Kỳ</th><th rowspan="2" class="divider-l">Tổng</th>
+                  <th colspan="2" class="grp-hdr grp-att divider-l">✅ Đến Khám</th>
+                  <th colspan="2" class="grp-hdr grp-abs divider-l">⏳ Vắng</th>
+                  <th rowspan="2" class="divider-l">Tổng Đến</th><th rowspan="2">Tổng Vắng</th>
+                  <th rowspan="2" class="divider-l">% Đến</th><th rowspan="2">% Vắng</th>
                 </tr>
                 <tr>
-                  <th style="font-size:0.68rem">🏥 Tái Khám</th><th style="font-size:0.68rem">🚶 Vãng Lai</th>
-                  <th style="font-size:0.68rem">🏥 Tái Khám</th><th style="font-size:0.68rem">🚶 Vãng Lai</th>
+                  <th class="sub-att divider-l">🏥 Tái Khám</th><th class="sub-att">🚶 Vãng Lai</th>
+                  <th class="sub-abs divider-l">🏥 Tái Khám</th><th class="sub-abs">🚶 Vãng Lai</th>
                 </tr>
               </thead><tbody>{rows_html}</tbody></table>
             </div>
