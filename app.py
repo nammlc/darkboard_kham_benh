@@ -3255,9 +3255,12 @@ if st.session_state.metrics:
                     if st.button("🔄 Reset", key="remind_reset", help="Xoá toàn bộ trạng thái gọi"):
                         st.session_state["remind_call_status"] = {}
                         st.session_state["remind_call_note"]   = {}
-                        st.rerun()
+                        st.rerun(scope="fragment")
 
                 # ── Hàm dựng 1 thẻ bệnh nhân + nút tracking gọi + ghi chú ──────
+                # Dùng @st.fragment để st.rerun(scope="fragment") chỉ rerun thẻ
+                # này, KHÔNG đóng popup/dialog bên ngoài.
+                @st.fragment
                 def _render_remind_patient_card(row_idx, row):
                     rid       = str(row_idx)
                     r_name    = str(row.get(COL_NAME,   "") or "—")
@@ -3338,7 +3341,7 @@ if st.session_state.metrics:
                             use_container_width=True,
                         ):
                             cs[rid] = "" if call_st == "called" else "called"
-                            st.rerun()
+                            st.rerun(scope="fragment")
                     with btn2:
                         if st.button(
                             "📵 Không bắt" if call_st != "no_answer" else "↩️ Bỏ",
@@ -3346,7 +3349,7 @@ if st.session_state.metrics:
                             use_container_width=True,
                         ):
                             cs[rid] = "" if call_st == "no_answer" else "no_answer"
-                            st.rerun()
+                            st.rerun(scope="fragment")
                     with btn3:
                         note_new = st.text_input(
                             "Ghi chú:",
