@@ -1568,11 +1568,7 @@ def _resolve_row_by_stt(ws, headers, stt):
 
 @st.cache_resource(ttl=3600)
 def _get_rw_worksheet(sheet_id, sheet_name, creds_key):
-    """
-    Cache gspread client RW + worksheet trong 1 giờ.
-    creds_key là chuỗi duy nhất đại diện cho credentials (để cache đúng).
-    Tránh tạo lại auth + open_by_key mỗi lần bấm Lưu/Xóa (~700ms overhead).
-    """
+    """Cache gspread worksheet RW 1 giờ — tránh tạo lại auth mỗi lần Lưu/Xóa."""
     creds_data_ = st.session_state.get("_creds_data_ref", creds_data)
     if isinstance(creds_data_, str):
         creds = Credentials.from_service_account_file(creds_data_, scopes=SCOPES)
@@ -1582,56 +1578,63 @@ def _get_rw_worksheet(sheet_id, sheet_name, creds_key):
     return cl.open_by_key(sheet_id).worksheet(sheet_name)
 
 
-def _cached_header_index(col_name):
-    """Tra index cột từ SHEET_COLUMNS tĩnh (1-based) không cần gọi API."""
-    cols = SHEET_COLUMNS
-    if col_name in cols:
-        return cols.index(col_name) + 1
-    return None
+@st.cache_data(ttl=3600)
+def _get_sheet_headers(sheet_id, sheet_name, creds_key):
+    """Cache headers (dòng 1) của Sheet — chỉ gọi API 1 lần/giờ.
+    Dùng để tra index cột THỰC TẾ trên Sheet, không dùng SHEET_COLUMNS
+    (vì SHEET_COLUMNS là template import Excel, không phải thứ tự Sheet thực)."""
+    ws = _get_rw_worksheet(sheet_id, sheet_name, creds_key)
+    return ws.row_values(1)
+
+
+def _creds_key():
+    """Tạo chuỗi key ngắn đại diện credentials để dùng làm cache key."""
+    if isinstance(creds_data, dict):
+        return str(creds_data.get("client_email", ""))[:60]
+    return str(creds_data)[:60]
 
 
 def update_patient_status_and_source(
     creds_data, sheet_id, sheet_name, sheet_row, new_status,
     new_source=None, stt=None
 ):
-    """
-    Ghi TRẠNG THÁI (và tuỳ chọn NGUỒN BỆNH NHÂN) trong 1 lần gọi API.
-    Dùng worksheet đã cache → không tạo lại auth mỗi lần.
+    """Ghi TRẠNG THÁI (và tuỳ chọn NGUỒN) lên Sheet.
+    Dùng headers cache để tra index cột ĐÚNG — không dùng SHEET_COLUMNS tĩnh.
     """
     try:
-        creds_key = str(sorted(creds_data.items()))[:80] if isinstance(creds_data, dict) else str(creds_data)[:80]
-        ws = _get_rw_worksheet(sheet_id, sheet_name, creds_key)
+        ck = _creds_key()
+        ws      = _get_rw_worksheet(sheet_id, sheet_name, ck)
+        headers = _get_sheet_headers(sheet_id, sheet_name, ck)
 
-        # Dùng index tĩnh từ SHEET_COLUMNS, chỉ fallback row_values khi stt cần resolve
-        status_col = _cached_header_index(COL_STATUS)
-        source_col = _cached_header_index(COL_SOURCE)
+        if COL_STATUS not in headers:
+            return False, f"Không tìm thấy cột '{COL_STATUS}' trên Google Sheet."
 
         if stt is not None:
-            headers = ws.row_values(1)
             resolved_row, err = _resolve_row_by_stt(ws, headers, stt)
             if err:
                 return False, err
             sheet_row = resolved_row
 
-        if not status_col:
-            return False, f"Không tìm thấy cột '{COL_STATUS}' trong SHEET_COLUMNS."
+        status_col = headers.index(COL_STATUS) + 1   # 1-based
 
         updates = [{"range": gspread.utils.rowcol_to_a1(sheet_row, status_col),
                     "values": [[new_status]]}]
-        if new_source is not None and source_col:
+
+        if new_source is not None and COL_SOURCE in headers:
+            source_col = headers.index(COL_SOURCE) + 1
             updates.append({"range": gspread.utils.rowcol_to_a1(sheet_row, source_col),
                             "values": [[new_source]]})
 
         ws.batch_update(updates, value_input_option="RAW")
         return True, None
     except Exception as e:
-        # Token hết hạn → xoá cache để lần sau tạo lại
         st.cache_resource.clear()
+        st.cache_data.clear()
         return False, f"Lỗi cập nhật: {type(e).__name__}: {e}"
 
 
 def update_patient_status(creds_data, sheet_id, sheet_name, sheet_row, new_status, stt=None):
-    """Wrapper tương thích ngược — gọi update_patient_status_and_source."""
+    """Wrapper tương thích ngược."""
     return update_patient_status_and_source(
         creds_data, sheet_id, sheet_name, sheet_row, new_status,
         new_source=None, stt=stt,
@@ -1639,16 +1642,13 @@ def update_patient_status(creds_data, sheet_id, sheet_name, sheet_row, new_statu
 
 
 def delete_patient_row(creds_data, sheet_id, sheet_name, sheet_row, stt=None):
-    """
-    Xóa hẳn 1 dòng bệnh nhân khỏi Google Sheet.
-    Dùng worksheet đã cache → không tạo lại auth mỗi lần.
-    """
+    """Xóa 1 dòng khỏi Sheet. Dùng ws cache — không tạo lại auth."""
     try:
-        creds_key = str(sorted(creds_data.items()))[:80] if isinstance(creds_data, dict) else str(creds_data)[:80]
-        ws = _get_rw_worksheet(sheet_id, sheet_name, creds_key)
+        ck = _creds_key()
+        ws = _get_rw_worksheet(sheet_id, sheet_name, ck)
 
         if stt is not None:
-            headers = ws.row_values(1)
+            headers = _get_sheet_headers(sheet_id, sheet_name, ck)
             resolved_row, err = _resolve_row_by_stt(ws, headers, stt)
             if err:
                 return False, err
@@ -1658,6 +1658,7 @@ def delete_patient_row(creds_data, sheet_id, sheet_name, sheet_row, stt=None):
         return True, None
     except Exception as e:
         st.cache_resource.clear()
+        st.cache_data.clear()
         return False, f"Lỗi xóa bệnh nhân: {type(e).__name__}: {e}"
 
 
@@ -2504,6 +2505,7 @@ def patient_row_khoa_source_html(row2):
     return f'<div class="khoa-src-stack">{khoa_show}{src_pill}</div>'
 
 
+@st.fragment
 def render_upcoming_table(sub_df, empty_msg, dl_prefix, dl_key, page_state_key=None):
     """
     Vẽ bảng chi tiết bệnh nhân + nút tải CSV cho 1 nhóm (kb / khác) trong 1 ngày.
@@ -2618,14 +2620,14 @@ def render_upcoming_table(sub_df, empty_msg, dl_prefix, dl_key, page_state_key=N
                                      help="Sửa trạng thái khám"):
                             st.session_state[edit_open_key] = not st.session_state.get(edit_open_key, False)
                             st.session_state[del_open_key] = False
-                            _smart_rerun()
+                            st.rerun(scope="fragment")
                 with mc5:
                     with st.container(key=f"delbtn_{dl_key}_{sheet_row}"):
                         if st.button("🗑️", key=f"btn_del_{dl_key}_{sheet_row}", use_container_width=True,
                                      help="Xóa bệnh nhân"):
                             st.session_state[del_open_key] = not st.session_state.get(del_open_key, False)
                             st.session_state[edit_open_key] = False
-                            _smart_rerun()
+                            st.rerun(scope="fragment")
 
         m_source = str(m_row.get(COL_SOURCE, "") or "")
         # ...
@@ -2719,7 +2721,7 @@ def render_inline_edit_form(sheet_row, patient_name, current_status, open_key,
             with st.container(key=f"cancelbtn_{open_key}"):
                 if st.button("❌ Đóng", key=f"inline_edit_close_{open_key}", use_container_width=True):
                     st.session_state[open_key] = False
-                    _smart_rerun()
+                    st.rerun(scope="fragment")
         with ic2:
             with st.container(key=f"savebtn_{open_key}"):
                 if st.button("💾 Lưu", key=f"inline_edit_save_{open_key}", use_container_width=True):
@@ -2740,7 +2742,7 @@ def render_inline_delete_form(sheet_row, patient_name, open_key):
             with st.container(key=f"cancelbtn_{open_key}"):
                 if st.button("❌ Hủy", key=f"inline_del_close_{open_key}", use_container_width=True):
                     st.session_state[open_key] = False
-                    _smart_rerun()
+                    st.rerun(scope="fragment")
         with ic2:
             with st.container(key=f"confirmdelbtn_{open_key}"):
                 if st.button("🗑️ Xác nhận xóa", key=f"inline_del_confirm_{open_key}",
