@@ -1566,6 +1566,49 @@ def _resolve_row_by_stt(ws, headers, stt):
     return None, f"Không tìm thấy bệnh nhân có STT = {stt_str} trên Google Sheet (có thể dòng đã bị xoá)."
 
 
+def update_patient_status_and_source(
+    creds_data, sheet_id, sheet_name, sheet_row, new_status,
+    new_source=None, stt=None
+):
+    """
+    Ghi TRẠNG THÁI (và tuỳ chọn NGUỒN BỆNH NHÂN) trong 1 lần gọi API
+    bằng batch_update → nhanh hơn gọi update_cell 2 lần.
+
+    Nếu new_source=None → chỉ ghi status (hành vi như update_patient_status).
+    """
+    try:
+        cl = authenticate_rw(creds_data)
+        ss = cl.open_by_key(sheet_id)
+        ws = ss.worksheet(sheet_name)
+
+        headers = ws.row_values(1)
+        if COL_STATUS not in headers:
+            return False, f"Không tìm thấy cột '{COL_STATUS}' trên Google Sheet."
+
+        if stt is not None:
+            resolved_row, err = _resolve_row_by_stt(ws, headers, stt)
+            if err:
+                return False, err
+            sheet_row = resolved_row
+
+        status_col = headers.index(COL_STATUS) + 1
+
+        if new_source is not None and COL_SOURCE in headers:
+            source_col = headers.index(COL_SOURCE) + 1
+            ws.batch_update([
+                {"range": gspread.utils.rowcol_to_a1(sheet_row, status_col),
+                 "values": [[new_status]]},
+                {"range": gspread.utils.rowcol_to_a1(sheet_row, source_col),
+                 "values": [[new_source]]},
+            ], value_input_option="RAW")
+        else:
+            ws.update_cell(sheet_row, status_col, new_status)
+
+        return True, None
+    except Exception as e:
+        return False, f"Lỗi cập nhật: {type(e).__name__}: {e}"
+
+
 def update_patient_status(creds_data, sheet_id, sheet_name, sheet_row, new_status, stt=None):
     """
     Cập nhật cột TRẠNG THÁI cho 1 bệnh nhân. Chỉ ghi đúng 1 ô, không đụng
@@ -2587,12 +2630,15 @@ def render_upcoming_table(sub_df, empty_msg, dl_prefix, dl_key, page_state_key=N
                             st.session_state[edit_open_key] = False
                             _smart_rerun()
 
-            # Dropdown Sửa/Xóa — mở rộng NGAY DƯỚI hàng, bên trong cùng 1 thẻ,
-            # không mở popup mới nên popup danh sách bên ngoài không bị đóng.
-            if st.session_state.get(edit_open_key):
-                render_inline_edit_form(sheet_row, m_name, m_status, open_key=edit_open_key)
-            if st.session_state.get(del_open_key):
-                render_inline_delete_form(sheet_row, m_name, open_key=del_open_key)
+        m_source = str(m_row.get(COL_SOURCE, "") or "")
+        # ...
+        # Dropdown Sửa/Xóa — mở rộng NGAY DƯỚI hàng, bên trong cùng 1 thẻ,
+        # không mở popup mới nên popup danh sách bên ngoài không bị đóng.
+        if st.session_state.get(edit_open_key):
+            render_inline_edit_form(sheet_row, m_name, m_status, open_key=edit_open_key,
+                                    current_source=m_source)
+        if st.session_state.get(del_open_key):
+            render_inline_delete_form(sheet_row, m_name, open_key=del_open_key)
 
     st.markdown('<div class="scroll-hint">💡 Vuốt màn hình để xem đầy đủ thông tin mỗi hàng</div>',
                 unsafe_allow_html=True)
@@ -2610,22 +2656,28 @@ def render_upcoming_table(sub_df, empty_msg, dl_prefix, dl_key, page_state_key=N
     )
 
 
-def _do_save_status(sheet_row, new_status, close_keys=()):
-    """Ghi trạng thái mới lên Google Sheet, làm mới cache, rồi rerun.
+def _do_save_status(sheet_row, new_status, close_keys=(), auto_source=None):
+    """Ghi trạng thái (và tuỳ chọn nguồn) lên Google Sheet, làm mới cache.
 
-    Dùng _smart_rerun() (rerun theo scope "fragment" khi đang ở trong 1
-    popup/dialog) để KHÔNG làm đóng popup danh sách bệnh nhân đang mở.
+    auto_source: nếu truyền vào (vd. "Bệnh nhân vãng lai") thì ghi luôn
+    cột NGUỒN BỆNH NHÂN trong cùng 1 lần API — dùng cho trường hợp nguồn
+    đang trống cần tự động điền khi lưu.
+    Dùng st.toast thay st.success để không block UI.
     """
     if not creds_data:
         st.error("❌ Chưa có thông tin xác thực (credentials). Kiểm tra Streamlit Secrets.")
         return
-    with st.spinner("Đang cập nhật trạng thái…"):
-        ok, err = update_patient_status(creds_data, SHEET_ID, SHEET_NAME, sheet_row, new_status)
+    with st.spinner("Đang cập nhật…"):
+        ok, err = update_patient_status_and_source(
+            creds_data, SHEET_ID, SHEET_NAME, sheet_row, new_status,
+            new_source=auto_source,
+        )
     if ok:
-        st.session_state.metrics = None  # buộc tải lại dữ liệu mới nhất từ Sheet
+        st.session_state.metrics = None
         for k in close_keys:
             st.session_state[k] = False
-        st.success("✅ Đã cập nhật trạng thái bệnh nhân!")
+        src_note = f" · Nguồn → {auto_source}" if auto_source else ""
+        st.toast(f"✅ Đã lưu: {new_status}{src_note}", icon="✅")
         _smart_rerun()
     else:
         st.error(f"❌ {err}")
@@ -2648,10 +2700,11 @@ def _do_delete_patient(sheet_row, close_keys=()):
         st.error(f"❌ {err}")
 
 
-def render_inline_edit_form(sheet_row, patient_name, current_status, open_key):
+def render_inline_edit_form(sheet_row, patient_name, current_status, open_key,
+                            current_source=None):
     """
-    Dropdown "Sửa trạng thái" hiện ngay bên dưới hàng bệnh nhân (trong cùng
-    popup danh sách đang mở) thay vì mở popup mới — tránh làm mất popup cha.
+    Dropdown "Sửa trạng thái" hiện ngay bên dưới hàng bệnh nhân.
+    current_source: nếu trống/None → khi lưu sẽ tự điền "Bệnh nhân vãng lai".
     """
     with st.container(key=f"editdrop_{open_key}"):
         st.markdown(f'<div class="edit-dlg-name">✏️ {patient_name}</div>', unsafe_allow_html=True)
@@ -2661,6 +2714,15 @@ def render_inline_edit_form(sheet_row, patient_name, current_status, open_key):
             "Trạng thái khám", options=options, index=default_idx,
             key=f"inline_edit_radio_{open_key}", label_visibility="collapsed",
         )
+
+        # Nếu nguồn đang trống → sẽ tự gán "Bệnh nhân vãng lai" khi lưu
+        src_empty = not current_source or str(current_source).strip() in (
+            "", "nan", "N/A", "—", "None"
+        )
+        auto_src = "Bệnh nhân vãng lai" if src_empty else None
+        if src_empty:
+            st.caption("ℹ️ Nguồn bệnh nhân đang trống — sẽ tự động gán **Bệnh nhân vãng lai** khi lưu.")
+
         ic1, ic2 = st.columns(2)
         with ic1:
             with st.container(key=f"cancelbtn_{open_key}"):
@@ -2670,7 +2732,8 @@ def render_inline_edit_form(sheet_row, patient_name, current_status, open_key):
         with ic2:
             with st.container(key=f"savebtn_{open_key}"):
                 if st.button("💾 Lưu", key=f"inline_edit_save_{open_key}", use_container_width=True):
-                    _do_save_status(sheet_row, new_status, close_keys=[open_key])
+                    _do_save_status(sheet_row, new_status, close_keys=[open_key],
+                                    auto_source=auto_src)
 
 
 def render_inline_delete_form(sheet_row, patient_name, open_key):
@@ -4685,21 +4748,27 @@ if st.session_state.metrics:
                 st.warning('⚠️ "Từ ngày" đang sau "Đến ngày" — đổi lại giúp tao nhé.')
             else:
                 vl_full_src = m.get("df_full", df)
+                src_col = vl_full_src[COL_SOURCE].astype(str).str.strip()
+                # Bao gồm: (1) nguồn là "vãng lai/ngoài" hoặc (2) nguồn trống/N/A/nan
+                mask_vl    = src_col.str.contains("vãng lai|vang lai|ngoài|ngoai", case=False, na=False)
+                mask_empty = src_col.isin(["", "nan", "N/A", "—", "None"]) | vl_full_src[COL_SOURCE].isna()
                 vl_mask = (
                     vl_full_src["_date"].notna()
                     & (vl_full_src["_date"].dt.date >= vl_from)
                     & (vl_full_src["_date"].dt.date <= vl_to)
-                    & (vl_full_src[COL_SOURCE].astype(str)
-                         .str.contains("vãng lai|vang lai|ngoài|ngoai", case=False, na=False))
+                    & (mask_vl | mask_empty)
                 )
                 if vl_only_pending:
                     vl_mask &= (~vl_full_src[COL_STATUS].astype(str).str.upper()
                                   .str.contains(STATUS_ATTENDED.upper(), na=False))
                 vl_scope_df = vl_full_src[vl_mask]
 
+                n_vl    = int(mask_vl[vl_mask].sum())
+                n_empty = int(mask_empty[vl_mask].sum())
                 st.caption(
-                    f"**{len(vl_scope_df)}** bệnh nhân vãng lai trong khoảng ngày đã chọn"
-                    + (" (đang CHƯA khám)." if vl_only_pending else ".")
+                    f"**{len(vl_scope_df)}** bệnh nhân"
+                    + (" (đang CHƯA khám)" if vl_only_pending else "")
+                    + f" — {n_vl} có nguồn vãng lai · {n_empty} trống nguồn (sẽ được gán vãng lai khi lưu)"
                 )
 
                 render_upcoming_table(
