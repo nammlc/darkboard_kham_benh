@@ -1566,101 +1566,98 @@ def _resolve_row_by_stt(ws, headers, stt):
     return None, f"Không tìm thấy bệnh nhân có STT = {stt_str} trên Google Sheet (có thể dòng đã bị xoá)."
 
 
+@st.cache_resource(ttl=3600)
+def _get_rw_worksheet(sheet_id, sheet_name, creds_key):
+    """
+    Cache gspread client RW + worksheet trong 1 giờ.
+    creds_key là chuỗi duy nhất đại diện cho credentials (để cache đúng).
+    Tránh tạo lại auth + open_by_key mỗi lần bấm Lưu/Xóa (~700ms overhead).
+    """
+    creds_data_ = st.session_state.get("_creds_data_ref", creds_data)
+    if isinstance(creds_data_, str):
+        creds = Credentials.from_service_account_file(creds_data_, scopes=SCOPES)
+    else:
+        creds = Credentials.from_service_account_info(creds_data_, scopes=SCOPES)
+    cl = gspread.authorize(creds)
+    return cl.open_by_key(sheet_id).worksheet(sheet_name)
+
+
+def _cached_header_index(col_name):
+    """Tra index cột từ SHEET_COLUMNS tĩnh (1-based) không cần gọi API."""
+    cols = SHEET_COLUMNS
+    if col_name in cols:
+        return cols.index(col_name) + 1
+    return None
+
+
 def update_patient_status_and_source(
     creds_data, sheet_id, sheet_name, sheet_row, new_status,
     new_source=None, stt=None
 ):
     """
-    Ghi TRẠNG THÁI (và tuỳ chọn NGUỒN BỆNH NHÂN) trong 1 lần gọi API
-    bằng batch_update → nhanh hơn gọi update_cell 2 lần.
-
-    Nếu new_source=None → chỉ ghi status (hành vi như update_patient_status).
+    Ghi TRẠNG THÁI (và tuỳ chọn NGUỒN BỆNH NHÂN) trong 1 lần gọi API.
+    Dùng worksheet đã cache → không tạo lại auth mỗi lần.
     """
     try:
-        cl = authenticate_rw(creds_data)
-        ss = cl.open_by_key(sheet_id)
-        ws = ss.worksheet(sheet_name)
+        creds_key = str(sorted(creds_data.items()))[:80] if isinstance(creds_data, dict) else str(creds_data)[:80]
+        ws = _get_rw_worksheet(sheet_id, sheet_name, creds_key)
 
-        headers = ws.row_values(1)
-        if COL_STATUS not in headers:
-            return False, f"Không tìm thấy cột '{COL_STATUS}' trên Google Sheet."
+        # Dùng index tĩnh từ SHEET_COLUMNS, chỉ fallback row_values khi stt cần resolve
+        status_col = _cached_header_index(COL_STATUS)
+        source_col = _cached_header_index(COL_SOURCE)
 
-        if stt is not None:
-            resolved_row, err = _resolve_row_by_stt(ws, headers, stt)
-            if err:
-                return False, err
-            sheet_row = resolved_row
-
-        status_col = headers.index(COL_STATUS) + 1
-
-        if new_source is not None and COL_SOURCE in headers:
-            source_col = headers.index(COL_SOURCE) + 1
-            ws.batch_update([
-                {"range": gspread.utils.rowcol_to_a1(sheet_row, status_col),
-                 "values": [[new_status]]},
-                {"range": gspread.utils.rowcol_to_a1(sheet_row, source_col),
-                 "values": [[new_source]]},
-            ], value_input_option="RAW")
-        else:
-            ws.update_cell(sheet_row, status_col, new_status)
-
-        return True, None
-    except Exception as e:
-        return False, f"Lỗi cập nhật: {type(e).__name__}: {e}"
-
-
-def update_patient_status(creds_data, sheet_id, sheet_name, sheet_row, new_status, stt=None):
-    """
-    Cập nhật cột TRẠNG THÁI cho 1 bệnh nhân. Chỉ ghi đúng 1 ô, không đụng
-    tới các cột khác. Trả về (thành_công: bool, lỗi: str | None).
-
-    - Nếu truyền `stt` (khoá chính, khuyến khích dùng): tra lại đúng số dòng
-      NGAY TẠI THỜI ĐIỂM GHI theo giá trị STT — an toàn dù Sheet đã bị
-      thêm/xoá/sắp xếp lại dòng từ lúc tải dữ liệu.
-    - Nếu không có `stt`: dùng `sheet_row` truyền vào như cũ (tương thích
-      ngược cho các chỗ chưa có cột STT).
-    """
-    try:
-        cl = authenticate_rw(creds_data)
-        ss = cl.open_by_key(sheet_id)
-        ws = ss.worksheet(sheet_name)
-
-        headers = ws.row_values(1)
-        if COL_STATUS not in headers:
-            return False, f"Không tìm thấy cột '{COL_STATUS}' trên Google Sheet."
-        col_idx = headers.index(COL_STATUS) + 1  # gspread dùng chỉ số 1-based
-
-        if stt is not None:
-            resolved_row, err = _resolve_row_by_stt(ws, headers, stt)
-            if err:
-                return False, err
-            sheet_row = resolved_row
-
-        ws.update_cell(sheet_row, col_idx, new_status)
-        return True, None
-    except Exception as e:
-        return False, f"Lỗi cập nhật trạng thái: {type(e).__name__}: {e}"
-
-
-def delete_patient_row(creds_data, sheet_id, sheet_name, sheet_row, stt=None):
-    """
-    Xóa hẳn 1 dòng bệnh nhân khỏi Google Sheet. Trả về (thành_công: bool, lỗi: str | None).
-    Truyền `stt` để tra lại đúng dòng theo khoá chính ngay tại thời điểm xoá
-    (an toàn hơn dùng sheet_row đã cache) — xem update_patient_status.
-    """
-    try:
-        cl = authenticate_rw(creds_data)
-        ss = cl.open_by_key(sheet_id)
-        ws = ss.worksheet(sheet_name)
         if stt is not None:
             headers = ws.row_values(1)
             resolved_row, err = _resolve_row_by_stt(ws, headers, stt)
             if err:
                 return False, err
             sheet_row = resolved_row
+
+        if not status_col:
+            return False, f"Không tìm thấy cột '{COL_STATUS}' trong SHEET_COLUMNS."
+
+        updates = [{"range": gspread.utils.rowcol_to_a1(sheet_row, status_col),
+                    "values": [[new_status]]}]
+        if new_source is not None and source_col:
+            updates.append({"range": gspread.utils.rowcol_to_a1(sheet_row, source_col),
+                            "values": [[new_source]]})
+
+        ws.batch_update(updates, value_input_option="RAW")
+        return True, None
+    except Exception as e:
+        # Token hết hạn → xoá cache để lần sau tạo lại
+        st.cache_resource.clear()
+        return False, f"Lỗi cập nhật: {type(e).__name__}: {e}"
+
+
+def update_patient_status(creds_data, sheet_id, sheet_name, sheet_row, new_status, stt=None):
+    """Wrapper tương thích ngược — gọi update_patient_status_and_source."""
+    return update_patient_status_and_source(
+        creds_data, sheet_id, sheet_name, sheet_row, new_status,
+        new_source=None, stt=stt,
+    )
+
+
+def delete_patient_row(creds_data, sheet_id, sheet_name, sheet_row, stt=None):
+    """
+    Xóa hẳn 1 dòng bệnh nhân khỏi Google Sheet.
+    Dùng worksheet đã cache → không tạo lại auth mỗi lần.
+    """
+    try:
+        creds_key = str(sorted(creds_data.items()))[:80] if isinstance(creds_data, dict) else str(creds_data)[:80]
+        ws = _get_rw_worksheet(sheet_id, sheet_name, creds_key)
+
+        if stt is not None:
+            headers = ws.row_values(1)
+            resolved_row, err = _resolve_row_by_stt(ws, headers, stt)
+            if err:
+                return False, err
+            sheet_row = resolved_row
+
         ws.delete_rows(sheet_row)
         return True, None
     except Exception as e:
+        st.cache_resource.clear()
         return False, f"Lỗi xóa bệnh nhân: {type(e).__name__}: {e}"
 
 
@@ -2657,21 +2654,16 @@ def render_upcoming_table(sub_df, empty_msg, dl_prefix, dl_key, page_state_key=N
 
 
 def _do_save_status(sheet_row, new_status, close_keys=(), auto_source=None):
-    """Ghi trạng thái (và tuỳ chọn nguồn) lên Google Sheet, làm mới cache.
-
-    auto_source: nếu truyền vào (vd. "Bệnh nhân vãng lai") thì ghi luôn
-    cột NGUỒN BỆNH NHÂN trong cùng 1 lần API — dùng cho trường hợp nguồn
-    đang trống cần tự động điền khi lưu.
-    Dùng st.toast thay st.success để không block UI.
+    """Ghi trạng thái (và tuỳ chọn nguồn) lên Google Sheet.
+    Không dùng st.spinner để tránh delay UI — dùng st.toast sau khi xong.
     """
     if not creds_data:
-        st.error("❌ Chưa có thông tin xác thực (credentials). Kiểm tra Streamlit Secrets.")
+        st.error("❌ Chưa có thông tin xác thực.")
         return
-    with st.spinner("Đang cập nhật…"):
-        ok, err = update_patient_status_and_source(
-            creds_data, SHEET_ID, SHEET_NAME, sheet_row, new_status,
-            new_source=auto_source,
-        )
+    ok, err = update_patient_status_and_source(
+        creds_data, SHEET_ID, SHEET_NAME, sheet_row, new_status,
+        new_source=auto_source,
+    )
     if ok:
         st.session_state.metrics = None
         for k in close_keys:
@@ -2684,17 +2676,16 @@ def _do_save_status(sheet_row, new_status, close_keys=(), auto_source=None):
 
 
 def _do_delete_patient(sheet_row, close_keys=()):
-    """Xóa bệnh nhân khỏi Google Sheet, làm mới cache, rồi rerun (giữ nguyên popup đang mở)."""
+    """Xóa bệnh nhân khỏi Google Sheet. Không dùng spinner để tránh delay UI."""
     if not creds_data:
-        st.error("❌ Chưa có thông tin xác thực (credentials). Kiểm tra Streamlit Secrets.")
+        st.error("❌ Chưa có thông tin xác thực.")
         return
-    with st.spinner("Đang xóa bệnh nhân…"):
-        ok, err = delete_patient_row(creds_data, SHEET_ID, SHEET_NAME, sheet_row)
+    ok, err = delete_patient_row(creds_data, SHEET_ID, SHEET_NAME, sheet_row)
     if ok:
         st.session_state.metrics = None
         for k in close_keys:
             st.session_state[k] = False
-        st.success("✅ Đã xóa bệnh nhân khỏi danh sách!")
+        st.toast("🗑️ Đã xóa bệnh nhân!", icon="🗑️")
         _smart_rerun()
     else:
         st.error(f"❌ {err}")
@@ -2719,9 +2710,9 @@ def render_inline_edit_form(sheet_row, patient_name, current_status, open_key,
         src_empty = not current_source or str(current_source).strip() in (
             "", "nan", "N/A", "—", "None"
         )
-        auto_src = "Bệnh nhân vãng lai" if src_empty else None
+        auto_src = "BỆNH NHÂN VÃNG LAI" if src_empty else None
         if src_empty:
-            st.caption("ℹ️ Nguồn bệnh nhân đang trống — sẽ tự động gán **Bệnh nhân vãng lai** khi lưu.")
+            st.caption("ℹ️ Nguồn bệnh nhân đang trống — sẽ tự động gán **BỆNH NHÂN VÃNG LAI** khi lưu.")
 
         ic1, ic2 = st.columns(2)
         with ic1:
