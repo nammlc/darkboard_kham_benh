@@ -628,15 +628,45 @@ div[class*="mrow_"] {
     overflow-x:hidden;
 }
 div[class*="mrow_"]:hover { border-color:#c7d2e0; box-shadow:0 2px 8px rgba(15,23,42,0.08); }
-/* 4 cột trong hàng đầu (Tên+SĐT | Khoa+Nguồn | Trạng thái | Sửa/Xóa) —
-   canh giữa theo chiều dọc, có gạch dọc phân vùng giữa mỗi cột (trừ cột đầu). */
-div[class*="mrow_"] div[data-testid="stHorizontalBlock"] {
+/* 4 cột trong HÀNG ĐẦU (Tên+SĐT | Khoa+Nguồn | Trạng thái | Sửa/Xóa) —
+   canh giữa theo chiều dọc, có gạch dọc phân vùng giữa mỗi cột (trừ cột đầu).
+   Chỉ áp cho "mrowhead_" (hàng đầu) — KHÔNG áp cho toàn bộ "mrow_" vì như
+   vậy sẽ lem cả xuống hàng nút Lưu/Đóng bên dưới (dropdown Sửa), làm 2 nút
+   dính sát vào nhau không có khoảng cách. */
+div[class*="mrowhead_"] div[data-testid="stHorizontalBlock"] {
     align-items:center !important; gap:0; flex-wrap:nowrap;
 }
-div[class*="mrow_"] div[data-testid="stHorizontalBlock"] > div[data-testid="column"]:nth-of-type(2),
-div[class*="mrow_"] div[data-testid="stHorizontalBlock"] > div[data-testid="column"]:nth-of-type(3),
-div[class*="mrow_"] div[data-testid="stHorizontalBlock"] > div[data-testid="column"]:nth-of-type(4) {
+div[class*="mrowhead_"] div[data-testid="stHorizontalBlock"] > div[data-testid="column"]:nth-of-type(2),
+div[class*="mrowhead_"] div[data-testid="stHorizontalBlock"] > div[data-testid="column"]:nth-of-type(3),
+div[class*="mrowhead_"] div[data-testid="stHorizontalBlock"] > div[data-testid="column"]:nth-of-type(4) {
     border-left:1px solid #eef0f4; padding-left:0.9rem !important; margin-left:0.9rem;
+}
+/* Hàng nút Lưu/Đóng, Xác nhận xóa/Hủy (bên trong editdrop_/deldrop_) —
+   có khoảng cách rõ ràng giữa 2 nút, không bị dính. */
+div[class*="editdrop_"] div[data-testid="stHorizontalBlock"],
+div[class*="deldrop_"] div[data-testid="stHorizontalBlock"] {
+    gap:0.7rem !important;
+}
+/* Nút "Hủy"/"Đóng" — trắng, viền xám, chữ đậm (hành động phụ/huỷ bỏ) */
+div[class*="cancelbtn_"] .stButton>button {
+    background:#ffffff !important; color:#334155 !important;
+    border:1.5px solid #d7dce3 !important; box-shadow:none !important;
+}
+div[class*="cancelbtn_"] .stButton>button:hover {
+    background:#f8fafc !important; border-color:#c7d2e0 !important;
+}
+/* Nút "Lưu" — xanh dương đậm (hành động chính) */
+div[class*="savebtn_"] .stButton>button {
+    background:linear-gradient(135deg,#3b82f6,#2563eb) !important; color:#fff !important;
+    border:none !important;
+}
+/* Nút "Xác nhận xóa" — đỏ (hành động phá hủy, cần nổi bật cảnh báo) */
+div[class*="confirmdelbtn_"] .stButton>button {
+    background:linear-gradient(135deg,#ef4444,#b91c1c) !important; color:#fff !important;
+    border:none !important; box-shadow:0 3px 10px rgba(239,68,68,0.3) !important;
+}
+div[class*="confirmdelbtn_"] .stButton>button:hover {
+    background:linear-gradient(135deg,#f87171,#ef4444) !important;
 }
 
 /* == FORCE LIGHT MODE — disable dark theme == */
@@ -2513,31 +2543,33 @@ def render_upcoming_table(sub_df, empty_msg, dl_prefix, dl_key, page_state_key=N
         with st.container(key=f"mrow_{dl_key}_{sheet_row}_{'att' if m_is_att else 'nos'}"):
             # ── 4 vùng cách nhau bằng gạch dọc nhạt: Tên+SĐT | Khoa+Nguồn |
             # Trạng thái | Sửa/Xóa (2 icon liền nhau, không có gạch ở giữa
-            # chúng — xem CSS div[class*="mrow_"] ... nth-of-type(2,3,4)). ──
-            mc1, mc2, mc3, mc4, mc5 = st.columns([3.2, 2.6, 1.3, 0.55, 0.55])
-            with mc1:
-                st.markdown(name_facts_html, unsafe_allow_html=True)
-            with mc2:
-                st.markdown(khoa_source_html, unsafe_allow_html=True)
-            with mc3:
-                st.markdown(
-                    f'<div class="mrow-status-wrap">{status_pill_html(m_status)}</div>',
-                    unsafe_allow_html=True
-                )
-            with mc4:
-                with st.container(key=f"editbtn_{dl_key}_{sheet_row}"):
-                    if st.button("✏️", key=f"btn_edit_{dl_key}_{sheet_row}", use_container_width=True,
-                                 help="Sửa trạng thái khám"):
-                        st.session_state[edit_open_key] = not st.session_state.get(edit_open_key, False)
-                        st.session_state[del_open_key] = False
-                        _smart_rerun()
-            with mc5:
-                with st.container(key=f"delbtn_{dl_key}_{sheet_row}"):
-                    if st.button("🗑️", key=f"btn_del_{dl_key}_{sheet_row}", use_container_width=True,
-                                 help="Xóa bệnh nhân"):
-                        st.session_state[del_open_key] = not st.session_state.get(del_open_key, False)
-                        st.session_state[edit_open_key] = False
-                        _smart_rerun()
+            # chúng). Bọc riêng trong "mrowhead_" để CSS gap:0/gạch dọc CHỈ
+            # áp cho hàng này — không lem xuống hàng nút Lưu/Đóng bên dưới. ──
+            with st.container(key=f"mrowhead_{dl_key}_{sheet_row}"):
+                mc1, mc2, mc3, mc4, mc5 = st.columns([3.2, 2.6, 1.3, 0.55, 0.55])
+                with mc1:
+                    st.markdown(name_facts_html, unsafe_allow_html=True)
+                with mc2:
+                    st.markdown(khoa_source_html, unsafe_allow_html=True)
+                with mc3:
+                    st.markdown(
+                        f'<div class="mrow-status-wrap">{status_pill_html(m_status)}</div>',
+                        unsafe_allow_html=True
+                    )
+                with mc4:
+                    with st.container(key=f"editbtn_{dl_key}_{sheet_row}"):
+                        if st.button("✏️", key=f"btn_edit_{dl_key}_{sheet_row}", use_container_width=True,
+                                     help="Sửa trạng thái khám"):
+                            st.session_state[edit_open_key] = not st.session_state.get(edit_open_key, False)
+                            st.session_state[del_open_key] = False
+                            _smart_rerun()
+                with mc5:
+                    with st.container(key=f"delbtn_{dl_key}_{sheet_row}"):
+                        if st.button("🗑️", key=f"btn_del_{dl_key}_{sheet_row}", use_container_width=True,
+                                     help="Xóa bệnh nhân"):
+                            st.session_state[del_open_key] = not st.session_state.get(del_open_key, False)
+                            st.session_state[edit_open_key] = False
+                            _smart_rerun()
 
             # Dropdown Sửa/Xóa — mở rộng NGAY DƯỚI hàng, bên trong cùng 1 thẻ,
             # không mở popup mới nên popup danh sách bên ngoài không bị đóng.
@@ -2615,12 +2647,14 @@ def render_inline_edit_form(sheet_row, patient_name, current_status, open_key):
         )
         ic1, ic2 = st.columns(2)
         with ic1:
-            if st.button("💾 Lưu", key=f"inline_edit_save_{open_key}", use_container_width=True):
-                _do_save_status(sheet_row, new_status, close_keys=[open_key])
+            with st.container(key=f"cancelbtn_{open_key}"):
+                if st.button("❌ Đóng", key=f"inline_edit_close_{open_key}", use_container_width=True):
+                    st.session_state[open_key] = False
+                    _smart_rerun()
         with ic2:
-            if st.button("❌ Đóng", key=f"inline_edit_close_{open_key}", use_container_width=True):
-                st.session_state[open_key] = False
-                _smart_rerun()
+            with st.container(key=f"savebtn_{open_key}"):
+                if st.button("💾 Lưu", key=f"inline_edit_save_{open_key}", use_container_width=True):
+                    _do_save_status(sheet_row, new_status, close_keys=[open_key])
 
 
 def render_inline_delete_form(sheet_row, patient_name, open_key):
@@ -2633,13 +2667,15 @@ def render_inline_delete_form(sheet_row, patient_name, open_key):
         )
         ic1, ic2 = st.columns(2)
         with ic1:
-            if st.button("🗑️ Xác nhận xóa", key=f"inline_del_confirm_{open_key}",
-                         use_container_width=True):
-                _do_delete_patient(sheet_row, close_keys=[open_key])
+            with st.container(key=f"cancelbtn_{open_key}"):
+                if st.button("❌ Hủy", key=f"inline_del_close_{open_key}", use_container_width=True):
+                    st.session_state[open_key] = False
+                    _smart_rerun()
         with ic2:
-            if st.button("❌ Hủy", key=f"inline_del_close_{open_key}", use_container_width=True):
-                st.session_state[open_key] = False
-                _smart_rerun()
+            with st.container(key=f"confirmdelbtn_{open_key}"):
+                if st.button("🗑️ Xác nhận xóa", key=f"inline_del_confirm_{open_key}",
+                             use_container_width=True):
+                    _do_delete_patient(sheet_row, close_keys=[open_key])
 
 
 def split_khoa_groups(day_df):
