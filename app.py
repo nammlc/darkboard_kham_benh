@@ -458,11 +458,21 @@ div[data-testid="stDownloadButton"] button {
 div[class*="editbtn_"] .stButton>button,
 div[class*="delbtn_"] .stButton>button {
     background:transparent !important; border:none !important; box-shadow:none !important;
-    font-size:1.05rem !important; padding:0.35rem !important; color:#475569 !important;
-    transform:none !important; line-height:1 !important;
+    outline:none !important; font-size:1.05rem !important; padding:0.35rem !important;
+    color:#475569 !important; transform:none !important; line-height:1 !important;
 }
-div[class*="editbtn_"] .stButton>button:hover { background:#eff6ff !important; border-radius:8px !important; color:#1d4ed8 !important; }
-div[class*="delbtn_"] .stButton>button:hover { background:#fef2f2 !important; border-radius:8px !important; color:#dc2626 !important; }
+div[class*="editbtn_"] .stButton>button:hover,
+div[class*="editbtn_"] .stButton>button:focus,
+div[class*="editbtn_"] .stButton>button:active {
+    background:#eff6ff !important; border:none !important; outline:none !important;
+    box-shadow:none !important; border-radius:8px !important; color:#1d4ed8 !important;
+}
+div[class*="delbtn_"] .stButton>button:hover,
+div[class*="delbtn_"] .stButton>button:focus,
+div[class*="delbtn_"] .stButton>button:active {
+    background:#fef2f2 !important; border:none !important; outline:none !important;
+    box-shadow:none !important; border-radius:8px !important; color:#dc2626 !important;
+}
 
 /* Dropdown "✏️ Sửa trạng thái" mở ngay dưới hàng — không phải popup mới */
 div[class*="editdrop_"] {
@@ -606,11 +616,11 @@ div[class*="_curbtn"] .stButton>button:hover {
    nhạt: (Tên+SĐT) | (Khoa+Nguồn) | (Trạng thái) | (Sửa/Xóa). */
 div[class*="mrow_"] {
     background:#ffffff;
-    border:1px solid #e5e7eb;
+    border:1px solid #d7dce3;
     border-radius:12px;
     padding:0.9rem 1.1rem;
-    margin-bottom:0.7rem;
-    box-shadow:0 1px 3px rgba(15,23,42,0.05);
+    margin-bottom:0.85rem;
+    box-shadow:0 2px 6px rgba(15,23,42,0.08);
     overflow-x:hidden;
 }
 div[class*="mrow_"]:hover { border-color:#c7d2e0; box-shadow:0 2px 8px rgba(15,23,42,0.08); }
