@@ -458,22 +458,32 @@ div[data-testid="stDownloadButton"] button {
 .status-pill-pending { background:#fde68a; color:#92400e; }
 
 /* Nút "✏️" / "🗑️" — icon trần, không khung/nền, chỉ nổi màu khi hover,
-   khớp phong cách icon-button tối giản trong thiết kế mới */
+   khớp phong cách icon-button tối giản trong thiết kế mới. Áp cả 2 kiểu
+   selector (.stButton>button cũ và [data-testid^="stBaseButton"] mới) để
+   chắc chắn khớp bất kể phiên bản Streamlit đang chạy. */
 div[class*="editbtn_"] .stButton>button,
-div[class*="delbtn_"] .stButton>button {
+div[class*="delbtn_"] .stButton>button,
+div[class*="editbtn_"] button[data-testid^="stBaseButton"],
+div[class*="delbtn_"] button[data-testid^="stBaseButton"] {
     background:transparent !important; border:none !important; box-shadow:none !important;
     outline:none !important; font-size:1.05rem !important; padding:0.35rem !important;
     color:#475569 !important; transform:none !important; line-height:1 !important;
 }
 div[class*="editbtn_"] .stButton>button:hover,
 div[class*="editbtn_"] .stButton>button:focus,
-div[class*="editbtn_"] .stButton>button:active {
+div[class*="editbtn_"] .stButton>button:active,
+div[class*="editbtn_"] button[data-testid^="stBaseButton"]:hover,
+div[class*="editbtn_"] button[data-testid^="stBaseButton"]:focus,
+div[class*="editbtn_"] button[data-testid^="stBaseButton"]:active {
     background:#eff6ff !important; border:none !important; outline:none !important;
     box-shadow:none !important; border-radius:8px !important; color:#1d4ed8 !important;
 }
 div[class*="delbtn_"] .stButton>button:hover,
 div[class*="delbtn_"] .stButton>button:focus,
-div[class*="delbtn_"] .stButton>button:active {
+div[class*="delbtn_"] .stButton>button:active,
+div[class*="delbtn_"] button[data-testid^="stBaseButton"]:hover,
+div[class*="delbtn_"] button[data-testid^="stBaseButton"]:focus,
+div[class*="delbtn_"] button[data-testid^="stBaseButton"]:active {
     background:#fef2f2 !important; border:none !important; outline:none !important;
     box-shadow:none !important; border-radius:8px !important; color:#dc2626 !important;
 }
@@ -640,6 +650,12 @@ div[class*="mrowhead_"] div[data-testid="stHorizontalBlock"] > div[data-testid="
 div[class*="mrowhead_"] div[data-testid="stHorizontalBlock"] > div[data-testid="column"]:nth-of-type(3),
 div[class*="mrowhead_"] div[data-testid="stHorizontalBlock"] > div[data-testid="column"]:nth-of-type(4) {
     border-left:1px solid #eef0f4; padding-left:0.9rem !important; margin-left:0.9rem;
+}
+/* Khoảng cách riêng giữa 2 icon ✏️ (cột 4) và 🗑️ (cột 5) — cột 5 không
+   nằm trong rule chia vùng ở trên nên mặc định dính sát cột 4 do gap:0
+   của cả hàng; thêm margin-left riêng để 2 icon không bị dính nhau. */
+div[class*="mrowhead_"] div[data-testid="stHorizontalBlock"] > div[data-testid="column"]:nth-of-type(5) {
+    margin-left:0.45rem !important;
 }
 /* Hàng nút Lưu/Đóng, Xác nhận xóa/Hủy (bên trong editdrop_/deldrop_) —
    có khoảng cách rõ ràng giữa 2 nút, không bị dính. */
