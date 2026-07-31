@@ -398,6 +398,10 @@ div[data-testid="stDownloadButton"] button {
     filter:brightness(1.08);
     box-shadow:0 4px 14px rgba(15,76,117,0.35) !important;
 }
+.mrow-meta-chip {
+    display:inline-block; font-size:0.7rem; font-weight:600; color:#475569;
+    background:#f1f5f9; padding:0.15rem 0.5rem; border-radius:10px; white-space:nowrap;
+}
 
 /* Badge Khoa trong bảng chi tiết */
 .khoa-badge {
@@ -2755,7 +2759,7 @@ if st.session_state.metrics:
         "📊 Tổng Quan",
         "🔍 Tìm Theo Ngày",
         "📅 3 Ngày Tới",
-        "📞 Nhắc Lịch",
+        "📞 Nhắc Lịch BN Chưa Đến",
         "🏥 Nguồn Bệnh Nhân",
         "📈 Báo Cáo",
         "👤 Bệnh Nhân",
@@ -3201,7 +3205,144 @@ if st.session_state.metrics:
                         st.session_state["remind_call_note"]   = {}
                         st.rerun()
 
-                # ── Danh sách từng ngày ──────────────────────────────────────
+                # ── Hàm dựng 1 thẻ bệnh nhân + nút tracking gọi + ghi chú ──────
+                def _render_remind_patient_card(row_idx, row):
+                    rid       = str(row_idx)
+                    r_name    = str(row.get(COL_NAME,   "") or "—")
+                    r_phone   = str(row.get(COL_PHONE,  "") or "")
+                    r_byr     = str(row.get(COL_BIRTH_YEAR, "") or "")
+                    r_khoa    = str(row.get(COL_KHOA,   "") or "")
+                    r_src     = str(row.get(COL_SOURCE, "") or "")
+                    r_time    = str(row.get(COL_EXAM_TIME, "") or "")
+                    if len(r_time) >= 5 and ":" in r_time:
+                        r_time = r_time[:5]
+
+                    call_st   = cs.get(rid, "")
+                    has_tel   = row["_has_phone"]
+                    tel_clean = "".join(c for c in r_phone if c.isdigit() or c == "+")
+
+                    border_color = (
+                        "#10b981" if call_st == "called"
+                        else "#f59e0b" if call_st == "no_answer"
+                        else "#ef4444"
+                    )
+
+                    if has_tel:
+                        phone_html = (
+                            f'<a href="tel:{tel_clean}" style="'
+                            f'color:#fff;background:#059669;padding:0.2rem 0.6rem;'
+                            f'border-radius:6px;font-size:0.7rem;font-weight:700;'
+                            f'text-decoration:none;white-space:nowrap">📞 {r_phone}</a>'
+                        )
+                    else:
+                        phone_html = '<span style="color:#94a3b8;font-size:0.7rem;white-space:nowrap">📞 Không có SĐT</span>'
+
+                    khoa_html = (
+                        f'<span class="pt-tag pt-tag-doc" style="font-size:0.67rem">{r_khoa[:28]}</span>'
+                        if r_khoa.strip() and r_khoa not in ["nan","N/A","—"] else ""
+                    )
+                    src_html  = source_pill_html(r_src) or ""
+                    time_html = (
+                        f'<span class="mrow-meta-chip">🕐 {r_time}</span>'
+                        if r_time and r_time not in ["—","N/A","nan"] else ""
+                    )
+                    byr_html  = (
+                        f'<span class="mrow-meta-chip">🎂 {r_byr}</span>'
+                        if r_byr and r_byr not in ["","—","N/A","nan"] else ""
+                    )
+
+                    call_badge = {
+                        "called":    '<span style="background:#d1fae5;color:#065f46;font-size:0.62rem;font-weight:700;padding:0.15rem 0.45rem;border-radius:10px">✅ Đã gọi</span>',
+                        "no_answer": '<span style="background:#fef3c7;color:#92400e;font-size:0.62rem;font-weight:700;padding:0.15rem 0.45rem;border-radius:10px">📵 Không bắt máy</span>',
+                        "":          '<span style="background:#fee2e2;color:#991b1b;font-size:0.62rem;font-weight:700;padding:0.15rem 0.45rem;border-radius:10px">⏳ Chưa gọi</span>',
+                    }.get(call_st, "")
+
+                    note_val = st.session_state["remind_call_note"].get(rid, "")
+
+                    st.markdown(f"""
+                    <div style="background:#fff;border:1px solid #e2e8f0;
+                        border-left:4px solid {border_color};border-radius:11px;
+                        padding:0.55rem 0.8rem 0.45rem;margin-bottom:0.4rem;
+                        box-shadow:0 1px 4px rgba(15,23,42,0.05)">
+                      <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:0.3rem;margin-bottom:0.3rem">
+                        <div style="font-size:0.85rem;font-weight:700;color:#0f172a">👤 {r_name}</div>
+                        <div style="display:flex;gap:0.35rem;align-items:center;flex-wrap:wrap">
+                          {call_badge} {phone_html}
+                        </div>
+                      </div>
+                      <div style="display:flex;flex-wrap:wrap;gap:0.28rem;align-items:center">
+                        {time_html}{byr_html}{khoa_html}{src_html}
+                      </div>
+                    </div>
+                    """, unsafe_allow_html=True)
+
+                    btn1, btn2, btn3 = st.columns([1, 1, 3])
+                    with btn1:
+                        if st.button(
+                            "✅ Đã gọi" if call_st != "called" else "↩️ Bỏ đã gọi",
+                            key=f"remind_called_{rid}",
+                            use_container_width=True,
+                        ):
+                            cs[rid] = "" if call_st == "called" else "called"
+                            st.rerun()
+                    with btn2:
+                        if st.button(
+                            "📵 Không bắt" if call_st != "no_answer" else "↩️ Bỏ",
+                            key=f"remind_noans_{rid}",
+                            use_container_width=True,
+                        ):
+                            cs[rid] = "" if call_st == "no_answer" else "no_answer"
+                            st.rerun()
+                    with btn3:
+                        note_new = st.text_input(
+                            "Ghi chú:",
+                            value=note_val,
+                            placeholder="Nhập ghi chú sau khi gọi...",
+                            key=f"remind_note_{rid}",
+                            label_visibility="collapsed",
+                        )
+                        if note_new != note_val:
+                            st.session_state["remind_call_note"][rid] = note_new
+
+                # ── Hàm dựng danh sách (phân trang) cho 1 nhóm khoa ────────────
+                def _render_remind_group(group_df, group_key):
+                    if group_df.empty:
+                        st.info("Không có bệnh nhân nào trong nhóm này.")
+                        return
+                    pg_key = f"pg_remind_{group_key}"
+                    items = list(group_df.iterrows())
+                    page_items, r_cur, r_total, r_start, r_end, r_tot = paginate_list(items, pg_key)
+                    render_pagination_bar(pg_key, r_cur, r_total, r_start, r_end, r_tot,
+                                          widget_key=f"{pg_key}_top")
+                    for row_idx, row in page_items:
+                        _render_remind_patient_card(row_idx, row)
+                    render_pagination_bar(pg_key, r_cur, r_total, r_start, r_end, r_tot,
+                                          widget_key=f"{pg_key}_bottom")
+
+                HAS_DIALOG_R = hasattr(st, "dialog")
+
+                def _render_remind_day_detail(day_df_, day_iso_):
+                    kb_df, khac_df = split_khoa_groups(day_df_)
+                    gtab1, gtab2 = st.tabs([
+                        f"🩺 Khoa Khám Bệnh & Chưa Phân Khoa · {len(kb_df)}",
+                        f"🏥 Khoa Điều Trị Nội Trú Khác · {len(khac_df)}",
+                    ])
+                    with gtab1:
+                        _render_remind_group(kb_df, f"{day_iso_}_kb")
+                    with gtab2:
+                        _render_remind_group(khac_df, f"{day_iso_}_khac")
+
+                if HAS_DIALOG_R:
+                    @st.dialog("📞 Chi Tiết Nhắc Lịch Theo Ngày", width="large")
+                    def _open_remind_dialog(day_iso_, day_label_):
+                        st.markdown(f"#### 📅 {day_label_}")
+                        dday_ = df_filtered[df_filtered["_date"].dt.date ==
+                                             datetime.strptime(day_iso_, "%Y-%m-%d").date()]
+                        st.caption(f"Tổng cộng {len(dday_)} bệnh nhân chưa đến khám ngày này.")
+                        _render_remind_day_detail(dday_, day_iso_)
+
+                # ── Danh sách từng ngày — CHỈ hiện tóm tắt (ngày + số lượng),
+                # bấm "Xem chi tiết" mới mở popup danh sách đầy đủ. ──────────
                 vn_days = ["Thứ Hai","Thứ Ba","Thứ Tư","Thứ Năm","Thứ Sáu","Thứ Bảy","Chủ Nhật"]
 
                 for past_d in sorted(past_dates, reverse=True):
@@ -3210,136 +3351,55 @@ if st.session_state.metrics:
                         continue
 
                     day_label    = f"{vn_days[past_d.weekday()]} · {past_d.strftime('%d/%m/%Y')}"
+                    day_iso      = past_d.isoformat()
                     n_day        = len(day_df)
                     n_day_phone  = int(day_df["_has_phone"].sum())
                     n_day_called = sum(1 for i in day_df.index if cs.get(str(i),"") == "called")
+                    kb_df, khac_df = split_khoa_groups(day_df)
 
                     st.markdown(
-                        f'<div class="mrow-section-hd">'
-                        f'📅 {day_label} &nbsp;·&nbsp; '
-                        f'<span style="color:#dc2626;font-weight:700">{n_day} chưa đến</span>'
+                        '<div class="upcoming-day">'
+                        '<div class="upcoming-day-header" style="background:linear-gradient(135deg,#ef4444,#7f1d1d);">'
+                        '<span class="upcoming-day-title">&#128197; ' + day_label + '</span>'
+                        '<span class="upcoming-day-count">' + str(n_day) + ' chưa đến</span>'
+                        '</div>',
+                        unsafe_allow_html=True
+                    )
+                    st.markdown(
+                        '<div class="upcoming-day-stats">'
+                        '<div class="uds-item uds-kb">'
+                        '<span class="uds-val">' + str(len(kb_df)) + '</span>'
+                        '<span class="uds-lbl">🩺 Khoa Khám Bệnh &amp; chưa phân khoa</span>'
+                        '</div>'
+                        '<div class="uds-item uds-khac">'
+                        '<span class="uds-val">' + str(len(khac_df)) + '</span>'
+                        '<span class="uds-lbl">🏥 Khoa điều trị nội trú khác</span>'
+                        '</div>'
+                        '</div>',
+                        unsafe_allow_html=True
+                    )
+                    st.markdown(
+                        f'<div style="text-align:center;font-size:0.76rem;color:#64748b;margin:0.3rem 0 0.6rem">'
+                        f'<span style="color:#059669;font-weight:600">{n_day_phone} có SĐT</span>'
                         f' &nbsp;·&nbsp; '
-                        f'<span style="color:#059669">{n_day_phone} có SĐT</span>'
-                        f' &nbsp;·&nbsp; '
-                        f'<span style="color:#2563eb">{n_day_called} đã gọi</span>'
+                        f'<span style="color:#2563eb;font-weight:600">{n_day_called} đã gọi</span>'
                         f'</div>',
-                        unsafe_allow_html=True,
+                        unsafe_allow_html=True
                     )
 
-                    # ── Phân trang danh sách bệnh nhân trong ngày này — tránh dồn
-                    # hết 1 lần khi 1 ngày có nhiều bệnh nhân chưa đến khám. ──
-                    day_key = f"pg_remind_{past_d.isoformat()}"
-                    day_items = list(day_df.iterrows())
-                    page_items, rmd_cur, rmd_total, rmd_start, rmd_end, rmd_tot = paginate_list(
-                        day_items, day_key
-                    )
-                    render_pagination_bar(day_key, rmd_cur, rmd_total, rmd_start, rmd_end, rmd_tot,
-                                          widget_key=f"{day_key}_top")
+                    if HAS_DIALOG_R:
+                        st.markdown('<div class="upcoming-day-actions">', unsafe_allow_html=True)
+                        if st.button("👁️ Xem chi tiết danh sách", key="btn_open_remind_" + day_iso,
+                                     use_container_width=True):
+                            _open_remind_dialog(day_iso, day_label)
+                        st.markdown('</div>', unsafe_allow_html=True)
+                    else:
+                        st.markdown('<div class="upcoming-day-actions">', unsafe_allow_html=True)
+                        with st.expander("👁️ Xem chi tiết danh sách bệnh nhân", expanded=False):
+                            _render_remind_day_detail(day_df, day_iso)
+                        st.markdown('</div>', unsafe_allow_html=True)
 
-                    for row_idx, row in page_items:
-                        rid       = str(row_idx)
-                        r_name    = str(row.get(COL_NAME,   "") or "—")
-                        r_phone   = str(row.get(COL_PHONE,  "") or "")
-                        r_byr     = str(row.get(COL_BIRTH_YEAR, "") or "")
-                        r_khoa    = str(row.get(COL_KHOA,   "") or "")
-                        r_src     = str(row.get(COL_SOURCE, "") or "")
-                        r_time    = str(row.get(COL_EXAM_TIME, "") or "")
-                        if len(r_time) >= 5 and ":" in r_time:
-                            r_time = r_time[:5]
-
-                        call_st   = cs.get(rid, "")
-                        has_tel   = row["_has_phone"]
-                        tel_clean = "".join(c for c in r_phone if c.isdigit() or c == "+")
-
-                        # Màu viền trái theo trạng thái gọi
-                        border_color = (
-                            "#10b981" if call_st == "called"
-                            else "#f59e0b" if call_st == "no_answer"
-                            else "#ef4444"
-                        )
-
-                        # HTML badge SĐT / trạng thái gọi
-                        if has_tel:
-                            phone_html = (
-                                f'<a href="tel:{tel_clean}" style="'
-                                f'color:#fff;background:#059669;padding:0.2rem 0.6rem;'
-                                f'border-radius:6px;font-size:0.7rem;font-weight:700;'
-                                f'text-decoration:none;white-space:nowrap">📞 {r_phone}</a>'
-                            )
-                        else:
-                            phone_html = '<span style="color:#94a3b8;font-size:0.7rem;white-space:nowrap">📞 Không có SĐT</span>'
-
-                        khoa_html = (
-                            f'<span class="pt-tag pt-tag-doc" style="font-size:0.67rem">{r_khoa[:28]}</span>'
-                            if r_khoa.strip() and r_khoa not in ["nan","N/A","—"] else ""
-                        )
-                        src_html  = source_badge(r_src) or ""
-                        time_html = (
-                            f'<span class="mrow-meta-chip">🕐 {r_time}</span>'
-                            if r_time and r_time not in ["—","N/A","nan"] else ""
-                        )
-                        byr_html  = (
-                            f'<span class="mrow-meta-chip">🎂 {r_byr}</span>'
-                            if r_byr and r_byr not in ["","—","N/A","nan"] else ""
-                        )
-
-                        # Badge trạng thái gọi
-                        call_badge = {
-                            "called":    '<span style="background:#d1fae5;color:#065f46;font-size:0.62rem;font-weight:700;padding:0.15rem 0.45rem;border-radius:10px">✅ Đã gọi</span>',
-                            "no_answer": '<span style="background:#fef3c7;color:#92400e;font-size:0.62rem;font-weight:700;padding:0.15rem 0.45rem;border-radius:10px">📵 Không bắt máy</span>',
-                            "":          '<span style="background:#fee2e2;color:#991b1b;font-size:0.62rem;font-weight:700;padding:0.15rem 0.45rem;border-radius:10px">⏳ Chưa gọi</span>',
-                        }.get(call_st, "")
-
-                        note_val = st.session_state["remind_call_note"].get(rid, "")
-
-                        st.markdown(f"""
-                        <div style="background:#fff;border:1px solid #e2e8f0;
-                            border-left:4px solid {border_color};border-radius:11px;
-                            padding:0.55rem 0.8rem 0.45rem;margin-bottom:0.4rem;
-                            box-shadow:0 1px 4px rgba(15,23,42,0.05)">
-                          <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:0.3rem;margin-bottom:0.3rem">
-                            <div style="font-size:0.85rem;font-weight:700;color:#0f172a">👤 {r_name}</div>
-                            <div style="display:flex;gap:0.35rem;align-items:center;flex-wrap:wrap">
-                              {call_badge} {phone_html}
-                            </div>
-                          </div>
-                          <div style="display:flex;flex-wrap:wrap;gap:0.28rem;align-items:center">
-                            {time_html}{byr_html}{khoa_html}{src_html}
-                          </div>
-                        </div>
-                        """, unsafe_allow_html=True)
-
-                        # ── Nút tracking + ghi chú ───────────────────────────
-                        btn1, btn2, btn3 = st.columns([1, 1, 3])
-                        with btn1:
-                            if st.button(
-                                "✅ Đã gọi" if call_st != "called" else "↩️ Bỏ đã gọi",
-                                key=f"remind_called_{rid}",
-                                use_container_width=True,
-                            ):
-                                cs[rid] = "" if call_st == "called" else "called"
-                                st.rerun()
-                        with btn2:
-                            if st.button(
-                                "📵 Không bắt" if call_st != "no_answer" else "↩️ Bỏ",
-                                key=f"remind_noans_{rid}",
-                                use_container_width=True,
-                            ):
-                                cs[rid] = "" if call_st == "no_answer" else "no_answer"
-                                st.rerun()
-                        with btn3:
-                            note_new = st.text_input(
-                                "Ghi chú:",
-                                value=note_val,
-                                placeholder="Nhập ghi chú sau khi gọi...",
-                                key=f"remind_note_{rid}",
-                                label_visibility="collapsed",
-                            )
-                            if note_new != note_val:
-                                st.session_state["remind_call_note"][rid] = note_new
-
-                    render_pagination_bar(day_key, rmd_cur, rmd_total, rmd_start, rmd_end, rmd_tot,
-                                          widget_key=f"{day_key}_bottom")
+                    st.markdown('</div>', unsafe_allow_html=True)  # close upcoming-day
 
                 # ── Nút tải CSV ─────────────────────────────────────────────
                 remind_cols = [col for col in [
