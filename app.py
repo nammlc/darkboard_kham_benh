@@ -2615,7 +2615,7 @@ def render_inline_edit_form(sheet_row, patient_name, current_status, open_key):
         )
         ic1, ic2 = st.columns(2)
         with ic1:
-            if st.button("💾 Lưu", key=f"inline_edit_save_{open_key}", use_container_width=True, type="primary"):
+            if st.button("💾 Lưu", key=f"inline_edit_save_{open_key}", use_container_width=True):
                 _do_save_status(sheet_row, new_status, close_keys=[open_key])
         with ic2:
             if st.button("❌ Đóng", key=f"inline_edit_close_{open_key}", use_container_width=True):
@@ -2634,7 +2634,7 @@ def render_inline_delete_form(sheet_row, patient_name, open_key):
         ic1, ic2 = st.columns(2)
         with ic1:
             if st.button("🗑️ Xác nhận xóa", key=f"inline_del_confirm_{open_key}",
-                         use_container_width=True, type="primary"):
+                         use_container_width=True):
                 _do_delete_patient(sheet_row, close_keys=[open_key])
         with ic2:
             if st.button("❌ Hủy", key=f"inline_del_close_{open_key}", use_container_width=True):
@@ -3228,14 +3228,13 @@ if st.session_state.metrics:
                     )
 
                     if has_tel:
-                        phone_html = (
+                        phone_inline = (
                             f'<a href="tel:{tel_clean}" style="'
-                            f'color:#fff;background:#059669;padding:0.2rem 0.6rem;'
-                            f'border-radius:6px;font-size:0.7rem;font-weight:700;'
+                            f'color:#1d4ed8;font-size:0.85rem;font-weight:700;'
                             f'text-decoration:none;white-space:nowrap">📞 {r_phone}</a>'
                         )
                     else:
-                        phone_html = '<span style="color:#94a3b8;font-size:0.7rem;white-space:nowrap">📞 Không có SĐT</span>'
+                        phone_inline = '<span style="color:#94a3b8;font-size:0.85rem;font-weight:600;white-space:nowrap">📞 Không có SĐT</span>'
 
                     khoa_html = (
                         f'<span class="pt-tag pt-tag-doc" style="font-size:0.67rem">{r_khoa[:28]}</span>'
@@ -3265,9 +3264,12 @@ if st.session_state.metrics:
                         padding:0.55rem 0.8rem 0.45rem;margin-bottom:0.4rem;
                         box-shadow:0 1px 4px rgba(15,23,42,0.05)">
                       <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:0.3rem;margin-bottom:0.3rem">
-                        <div style="font-size:0.85rem;font-weight:700;color:#0f172a">👤 {r_name}</div>
+                        <div style="display:flex;align-items:center;gap:0.6rem;flex-wrap:wrap">
+                          <span style="font-size:0.85rem;font-weight:700;color:#0f172a">👤 {r_name}</span>
+                          {phone_inline}
+                        </div>
                         <div style="display:flex;gap:0.35rem;align-items:center;flex-wrap:wrap">
-                          {call_badge} {phone_html}
+                          {call_badge}
                         </div>
                       </div>
                       <div style="display:flex;flex-wrap:wrap;gap:0.28rem;align-items:center">
