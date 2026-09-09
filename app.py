@@ -5064,7 +5064,7 @@ if st.session_state.metrics:
         # ════════════════════════════════════
         # ĐỐI CHIẾU TRÙNG — TÁI KHÁM (TỪ KHOA) vs ĐĂNG KÝ FORM
         # Tự đối chiếu Sheet với chính nó — KHÔNG cần upload file ngoài.
-        # CHỈ GẮN NHÃN, không tự xoá dòng nào.
+        # Sau khi xác nhận, XOÁ THẲNG dòng Form nghi trùng khỏi Sheet.
         # ════════════════════════════════════
         st.markdown('<div style="height:1px;background:#e2e8f0;margin:1.6rem 0"></div>', unsafe_allow_html=True)
         st.markdown(
@@ -5076,22 +5076,86 @@ if st.session_state.metrics:
         <div style="background:#f5f3ff;border:1px solid #ddd6fe;border-radius:12px;
                     padding:0.9rem 1.1rem;margin-bottom:0.9rem;font-size:0.83rem;color:#4c1d95">
           Quét những bệnh nhân <b>đã có sẵn lịch tái khám (từ khoa)</b> nhưng gần ngày hẹn lại
-          <b>tự đăng ký thêm qua Form online</b> (nguồn trống) cho CÙNG 1 đợt khám — khớp theo
-          Tên + SĐT / Tên + Năm sinh, ngày hẹn lệch nhau tối đa <b>{DUPLICATE_WINDOW_DAYS} ngày</b>.
-          Quét <b>bất kể trạng thái đã/chưa khám</b> — kể cả khi dòng tái khám đã được đối chiếu
-          "Đã khám" ở mục trên rồi, để bắt được cả trường hợp dòng Form đăng ký trước/sau đó vẫn
-          còn sót lại (và có nguy cơ sau này tự khớp trùng, gây <b>đếm trùng 1 lượt khám thành 2</b>).<br>
-          🚫 <b>Không tự xoá gì cả</b> — chỉ <b>gắn nhãn</b> "{DUP_TAG_PREFIX}" vào cột NGUỒN BỆNH NHÂN
-          của dòng Form nghi trùng (và có thể gỡ "Đã khám" nếu cần), để bạn tự kiểm tra và xoá tay
-          dòng đó trên Google Sheet.
+          <b>tự đăng ký thêm qua Form online</b> (nguồn trống hoặc "vãng lai") cho CÙNG 1 đợt khám
+          — khớp theo Tên + SĐT / Tên + Năm sinh, ngày hẹn lệch nhau tối đa
+          <b>{DUPLICATE_WINDOW_DAYS} ngày</b>. Quét <b>bất kể trạng thái đã/chưa khám</b> — kể cả
+          khi dòng tái khám đã được đối chiếu "Đã khám" ở mục trên rồi, để bắt được cả trường hợp
+          dòng Form đăng ký trước/sau đó vẫn còn sót lại (và có nguy cơ sau này tự khớp trùng, gây
+          <b>đếm trùng 1 lượt khám thành 2</b>).<br>
+          🗑️ Sau khi xem lại 2 bên và bấm <b>xác nhận</b>, dòng Form nghi trùng sẽ được
+          <b>xoá HẲN khỏi Google Sheet</b> ngay — luôn giữ lại dòng tái khám (từ khoa) làm dòng
+          gốc. Đây là thao tác <b>không thể hoàn tác</b>, nên hãy xem kỹ thông tin 2 bên trước
+          khi xác nhận xoá.
         </div>
         """, unsafe_allow_html=True)
+
+        # ── Dọn dòng đã gắn nhãn trùng từ PHIÊN BẢN CŨ (khi hệ thống còn chỉ
+        # gắn nhãn chứ chưa tự xoá) — các dòng này không còn hiện trong lần
+        # quét trùng mới ở dưới (vì nguồn không còn trống/vãng lai nữa), nên
+        # dọn riêng ở đây, độc lập với bản quét.
+        df_full_legacy = m.get("df_full", df)
+        src_legacy = df_full_legacy[COL_SOURCE].astype(str).str.strip()
+        mask_legacy_tagged = src_legacy.str.startswith(DUP_TAG_PREFIX)
+        if mask_legacy_tagged.any():
+            legacy_rows = []
+            for idx4, row in df_full_legacy[mask_legacy_tagged].iterrows():
+                legacy_rows.append({
+                    "sheet_row": int(idx4) + 2,
+                    "stt": row.get(COL_STT, "") if COL_STT in row.index else "",
+                    "name": row.get(COL_NAME, ""),
+                    "source": row.get(COL_SOURCE, ""),
+                })
+            st.info(f"🧹 Có **{len(legacy_rows)}** dòng đã được gắn nhãn trùng từ trước, chưa xoá.")
+            with st.expander(f"Xem {len(legacy_rows)} dòng cần dọn"):
+                for lr in legacy_rows:
+                    st.write(f"STT {lr['stt'] or '—'} · {lr['name']} · _{lr['source']}_")
+            legacy_confirm_key = "dup_legacy_del_confirm"
+            if not st.session_state.get(legacy_confirm_key):
+                if st.button(
+                    f"🗑️ Xoá tất cả {len(legacy_rows)} dòng đã gắn nhãn trùng từ trước",
+                    key="dup_legacy_del_btn", use_container_width=True
+                ):
+                    st.session_state[legacy_confirm_key] = True
+                    st.rerun()
+            else:
+                st.error(f"⚠️ Xoá HẲN {len(legacy_rows)} dòng khỏi Google Sheet — KHÔNG THỂ HOÀN TÁC. Chắc chắn chứ?")
+                lgc1, lgc2 = st.columns(2)
+                with lgc1:
+                    if st.button("✅ Xác nhận xoá tất cả", key="dup_legacy_del_yes",
+                                 type="primary", use_container_width=True):
+                        if not creds_data:
+                            st.error("❌ Chưa có credentials.")
+                        else:
+                            n_del, err_del = delete_sheet_rows(
+                                creds_data, SHEET_ID, SHEET_NAME,
+                                [(lr["sheet_row"], lr.get("stt") or None) for lr in legacy_rows]
+                            )
+                            if err_del:
+                                st.error(f"❌ {err_del}")
+                            else:
+                                st.success(f"✅ Đã xoá {n_del} dòng khỏi Google Sheet.")
+                                st.session_state.pop(legacy_confirm_key, None)
+                                st.session_state.metrics = None
+                                st.rerun()
+                with lgc2:
+                    if st.button("Huỷ", key="dup_legacy_del_no", use_container_width=True):
+                        st.session_state.pop(legacy_confirm_key, None)
+                        st.rerun()
 
         if st.button("🔁 Quét Trùng Tái Khám ↔ Form", use_container_width=True, key="dup_scan_btn"):
             df_full_dup = m.get("df_full", df)
             src_str_dup = df_full_dup[COL_SOURCE].astype(str).str.strip()
             mask_khoa_dup = src_str_dup.str.contains("khoa|tái|nội trú|xuất viện|tai", case=False, na=False)
+            # Nguồn "vãng lai / đăng ký online" gồm CẢ nguồn TRỐNG lẫn nguồn đã
+            # có chữ "vãng lai/ngoài" — vì sau khi Bước 1/2 xác nhận "Đã khám",
+            # nguồn TRỐNG sẽ tự động được gán lại thành "BỆNH NHÂN VÃNG LAI",
+            # nên nếu chỉ bắt nguồn trống, những dòng đã qua bước xác nhận đó
+            # sẽ bị LỌT khỏi lần quét trùng sau. Loại trừ những dòng ĐÃ được
+            # gắn nhãn trùng từ trước (đã xử lý xong, không cần xét lại).
+            mask_vl_kw_dup = src_str_dup.str.contains("vãng lai|vang lai|ngoài|ngoai", case=False, na=False)
             mask_blank_dup = src_str_dup.apply(_blank_source)
+            mask_already_tagged_dup = src_str_dup.str.startswith(DUP_TAG_PREFIX)
+            mask_form_dup = (mask_blank_dup | mask_vl_kw_dup) & ~mask_already_tagged_dup
             # LƯU Ý: KHÔNG lọc theo trạng thái "chưa khám" ở đây nữa — mục đích
             # là tìm dòng DƯ THỪA, không phải tìm dòng chưa xử lý. Một dòng
             # tái khám dù ĐÃ được đánh dấu "Đã khám" (qua Bước 1/2 ở trên) vẫn
@@ -5120,7 +5184,7 @@ if st.session_state.metrics:
                 return out
 
             khoa_list_dup = _to_dup_patient_list(mask_khoa_dup)
-            form_list_dup = _to_dup_patient_list(mask_blank_dup)
+            form_list_dup = _to_dup_patient_list(mask_form_dup)
             with st.spinner("Đang quét trùng…"):
                 dup_pairs = find_duplicate_tk_form(khoa_list_dup, form_list_dup)
             # Đánh dấu mức độ nghiêm trọng: cả 2 dòng đã "Đã khám" → đang bị
@@ -5138,7 +5202,7 @@ if st.session_state.metrics:
             st.session_state["dup_scanned_at"] = datetime.now().strftime("%H:%M %d/%m/%Y")
             st.caption(
                 f"Đã quét {len(khoa_list_dup)} dòng tái khám (từ khoa) và "
-                f"{len(form_list_dup)} dòng đăng ký Form (nguồn trống), trong "
+                f"{len(form_list_dup)} dòng đăng ký Form/vãng lai, trong "
                 f"{RECONCILE_LOOKBACK_DAYS} ngày gần nhất — bất kể trạng thái đã/chưa khám."
             )
             if not dup_pairs:
@@ -5163,52 +5227,9 @@ if st.session_state.metrics:
                 "normal": "⚪ Bình thường",
             }
 
-            tagged_pairs = [
-                d for d in dup_pairs
-                if str(d["form"].get("source", "")).strip().startswith(DUP_TAG_PREFIX)
-            ]
-            if tagged_pairs:
-                bulk_confirm_key = "dup_bulk_del_confirm"
-                if not st.session_state.get(bulk_confirm_key):
-                    if st.button(
-                        f"🗑️ Xoá hẳn TẤT CẢ {len(tagged_pairs)} dòng Form đã gắn nhãn trùng",
-                        key="dup_bulk_del_btn", use_container_width=True
-                    ):
-                        st.session_state[bulk_confirm_key] = True
-                        st.rerun()
-                else:
-                    st.error(
-                        f"⚠️ Sắp xoá HẲN {len(tagged_pairs)} dòng Form khỏi Google Sheet — "
-                        f"KHÔNG THỂ HOÀN TÁC. Chắc chắn chứ?"
-                    )
-                    bdc1, bdc2 = st.columns(2)
-                    with bdc1:
-                        if st.button("✅ Xác nhận xoá tất cả", key="dup_bulk_del_yes",
-                                     type="primary", use_container_width=True):
-                            if not creds_data:
-                                st.error("❌ Chưa có credentials.")
-                            else:
-                                n_del, err_del = delete_sheet_rows(
-                                    creds_data, SHEET_ID, SHEET_NAME,
-                                    [(d["form"]["sheet_row"], d["form"].get("stt") or None) for d in tagged_pairs]
-                                )
-                                if err_del:
-                                    st.error(f"❌ {err_del}")
-                                else:
-                                    st.success(f"✅ Đã xoá {n_del} dòng khỏi Google Sheet.")
-                                    st.session_state.pop(bulk_confirm_key, None)
-                                    st.session_state.pop("dup_pairs", None)
-                                    st.session_state.metrics = None
-                                    st.rerun()
-                    with bdc2:
-                        if st.button("Huỷ", key="dup_bulk_del_no", use_container_width=True):
-                            st.session_state.pop(bulk_confirm_key, None)
-                            st.rerun()
-
             for d in sorted(dup_pairs, key=lambda x: (SEVERITY_RANK[x["severity"]], x["match_tier"])):
                 pk, pf = d["khoa"], d["form"]
                 tier_label = {1: "Tên + SĐT", 2: "Tên + Năm sinh", 3: "❓ Chỉ khớp tên"}[d["match_tier"]]
-                already_tagged = str(pf.get("source", "")).strip().startswith(DUP_TAG_PREFIX)
                 khoa_attended = STATUS_ATTENDED.upper() in str(pk.get("status_now", "")).upper()
                 form_attended = STATUS_ATTENDED.upper() in str(pf.get("status_now", "")).upper()
                 day_diff_str = (
@@ -5218,18 +5239,16 @@ if st.session_state.metrics:
                 with st.expander(
                     f"{sev_label[d['severity']]}  ·  {pk['name']}  ·  khớp {tier_label}  ·  "
                     f"lệch ngày hẹn {day_diff_str}  ·  độ giống tên {d['score']:.0f}%"
-                    + ("  ·  🏷️ đã gắn nhãn" if already_tagged else "")
                 ):
                     if d["severity"] == "critical":
                         st.error(
-                            "🔴 CẢ 2 dòng đều đang được tính là \"Đã khám\" — rất có thể 1 lượt khám "
-                            "thực tế đang bị đếm thành 2 trong thống kê. Nên gỡ trạng thái \"Đã khám\" "
-                            "của dòng Form (dòng dư thừa) để số liệu đúng lại."
+                            "🔴 CẢ 2 dòng đều đang được tính là \"Đã khám\" — 1 lượt khám thực tế đang "
+                            "bị đếm thành 2 trong thống kê. Xoá dòng Form (dòng dư thừa) để số liệu đúng lại."
                         )
                     elif d["severity"] == "leftover":
                         st.info(
                             "🟡 Một bên đã ghi nhận \"Đã khám\", dòng còn lại vẫn \"chưa khám\" — "
-                            "khả năng cao dòng \"chưa khám\" là dòng dư thừa, nên gắn nhãn để dọn."
+                            "khả năng cao dòng \"chưa khám\" là dòng dư thừa, nên xoá để dọn."
                         )
 
                     cA, cB = st.columns(2)
@@ -5250,100 +5269,49 @@ if st.session_state.metrics:
                         st.write(f"Nguồn hiện tại: {pf.get('source') or '(trống)'}")
                         st.write(f"Trạng thái: {'✅ Đã khám' if form_attended else '⏳ Chưa khám'}")
 
-                    if already_tagged:
-                        st.caption("🏷️ Dòng Form này đã được gắn nhãn trùng.")
-                        confirm_key = f"dup_del_confirm_{pf['sheet_row']}"
-                        if not st.session_state.get(confirm_key):
-                            if st.button(
-                                "🗑️ Xoá hẳn dòng Form này khỏi Sheet",
-                                key=f"dup_del_btn_{pf['sheet_row']}", use_container_width=True
-                            ):
-                                st.session_state[confirm_key] = True
-                                st.rerun()
-                        else:
-                            st.error(
-                                f"⚠️ Xoá HẲN dòng STT {pf.get('stt') or '—'} ({pf['name']}) khỏi Google "
-                                f"Sheet — KHÔNG THỂ HOÀN TÁC. Chắc chắn chứ?"
-                            )
-                            dc1, dc2 = st.columns(2)
-                            with dc1:
-                                if st.button(
-                                    "✅ Xác nhận xoá", key=f"dup_del_yes_{pf['sheet_row']}",
-                                    type="primary", use_container_width=True
-                                ):
-                                    if not creds_data:
-                                        st.error("❌ Chưa có credentials.")
-                                    else:
-                                        n_del, err_del = delete_sheet_rows(
-                                            creds_data, SHEET_ID, SHEET_NAME,
-                                            [(pf["sheet_row"], pf.get("stt") or None)]
-                                        )
-                                        if err_del:
-                                            st.error(f"❌ {err_del}")
-                                        else:
-                                            st.success(f"✅ Đã xoá {n_del} dòng khỏi Google Sheet.")
-                                            st.session_state.pop(confirm_key, None)
-                                            st.session_state.pop("dup_pairs", None)
-                                            st.session_state.metrics = None
-                                            st.rerun()
-                            with dc2:
-                                if st.button(
-                                    "Huỷ", key=f"dup_del_no_{pf['sheet_row']}", use_container_width=True
-                                ):
-                                    st.session_state.pop(confirm_key, None)
-                                    st.rerun()
+                    # Xoá thẳng dòng Form nghi trùng — không cần bước "gắn
+                    # nhãn" riêng nữa. Vẫn giữ 1 lần xác nhận để tránh bấm
+                    # nhầm, vì đây là thao tác KHÔNG THỂ HOÀN TÁC.
+                    confirm_key = f"dup_del_confirm_{pf['sheet_row']}"
+                    if not st.session_state.get(confirm_key):
+                        if st.button(
+                            "🗑️ Trùng — Xoá Dòng Form Này",
+                            key=f"dup_del_btn_{pf['sheet_row']}", use_container_width=True, type="primary"
+                        ):
+                            st.session_state[confirm_key] = True
+                            st.rerun()
                     else:
-                        tag = (
-                            f"{DUP_TAG_PREFIX} - đã có lịch tái khám STT "
-                            f"{pk.get('stt') or pk['sheet_row']} "
-                            f"({pk['exam_date'].strftime('%d/%m/%Y') if pk['exam_date'] else '—'})"
+                        st.error(
+                            f"⚠️ Xoá HẲN dòng STT {pf.get('stt') or '—'} ({pf['name']}) khỏi Google "
+                            f"Sheet — KHÔNG THỂ HOÀN TÁC. Chắc chắn chứ?"
                         )
-                        if form_attended:
-                            bt1, bt2 = st.columns(2)
-                        else:
-                            bt1 = st.container()
-                            bt2 = None
-                        with bt1:
+                        dc1, dc2 = st.columns(2)
+                        with dc1:
                             if st.button(
-                                "🏷️ Gắn nhãn TRÙNG" + ("" if not form_attended else " (giữ nguyên Đã khám)"),
-                                key=f"dup_tag_{pf['sheet_row']}", use_container_width=True,
-                                type="primary" if not form_attended else "secondary"
+                                "✅ Xác nhận xoá", key=f"dup_del_yes_{pf['sheet_row']}",
+                                type="primary", use_container_width=True
                             ):
                                 if not creds_data:
                                     st.error("❌ Chưa có credentials.")
                                 else:
-                                    ok, err_tag = update_patient_fields(
-                                        creds_data, SHEET_ID, SHEET_NAME, pf["sheet_row"],
-                                        {COL_SOURCE: tag}, stt=pf.get("stt") or None
+                                    n_del, err_del = delete_sheet_rows(
+                                        creds_data, SHEET_ID, SHEET_NAME,
+                                        [(pf["sheet_row"], pf.get("stt") or None)]
                                     )
-                                    if ok:
-                                        st.success("✅ Đã gắn nhãn — vào Google Sheet để kiểm tra & xoá tay dòng này.")
+                                    if err_del:
+                                        st.error(f"❌ {err_del}")
+                                    else:
+                                        st.success("✅ Đã xoá dòng khỏi Google Sheet.")
+                                        st.session_state.pop(confirm_key, None)
+                                        st.session_state.pop("dup_pairs", None)
                                         st.session_state.metrics = None
-                                    else:
-                                        st.error(f"❌ {err_tag}")
-                        if form_attended:
-                            with bt2:
-                                if st.button(
-                                    "↩️ Gắn nhãn + Gỡ \"Đã khám\" (tránh đếm trùng)",
-                                    key=f"dup_untag_att_{pf['sheet_row']}", use_container_width=True,
-                                    type="primary"
-                                ):
-                                    if not creds_data:
-                                        st.error("❌ Chưa có credentials.")
-                                    else:
-                                        ok, err_tag = update_patient_fields(
-                                            creds_data, SHEET_ID, SHEET_NAME, pf["sheet_row"],
-                                            {COL_SOURCE: tag, COL_STATUS: STATUS_NOT_ATTENDED},
-                                            stt=pf.get("stt") or None
-                                        )
-                                        if ok:
-                                            st.success(
-                                                "✅ Đã gắn nhãn và gỡ \"Đã khám\" khỏi dòng Form — thống kê "
-                                                "không còn bị đếm trùng nữa. Vào Google Sheet để xoá tay dòng này."
-                                            )
-                                            st.session_state.metrics = None
-                                        else:
-                                            st.error(f"❌ {err_tag}")
+                                        st.rerun()
+                        with dc2:
+                            if st.button(
+                                "Huỷ", key=f"dup_del_no_{pf['sheet_row']}", use_container_width=True
+                            ):
+                                st.session_state.pop(confirm_key, None)
+                                st.rerun()
 
 
 
