@@ -1724,10 +1724,15 @@ def update_patient_status_batch(creds_data, sheet_id, sheet_name, updates):
     (batch_update) thay vì gọi update_cell lặp lại từng dòng — nhanh hơn và
     tránh bị Google giới hạn số request khi đối chiếu hàng loạt.
 
-    updates: list các tuple (sheet_row, new_status, stt_hoặc_None).
-             Nếu phần tử thứ 3 (stt) có giá trị, dòng ghi sẽ được TRA LẠI
-             theo khoá chính STT ngay tại thời điểm ghi (an toàn hơn, xem
-             update_patient_status) — nếu không, dùng sheet_row như cũ.
+    updates: list các tuple (sheet_row, new_status, stt_hoặc_None,
+             new_source_hoặc_None). Nếu phần tử thứ 3 (stt) có giá trị,
+             dòng ghi sẽ được TRA LẠI theo khoá chính STT ngay tại thời điểm
+             ghi (an toàn hơn, xem update_patient_status) — nếu không, dùng
+             sheet_row như cũ. Nếu phần tử thứ 4 (new_source) có giá trị,
+             cột NGUỒN BỆNH NHÂN của dòng đó cũng được ghi đè cùng lúc
+             (dùng khi xác nhận bệnh nhân vãng lai/đăng ký online đã đến
+             khám — gán lại nguồn thành "BỆNH NHÂN VÃNG LAI" luôn trong
+             cùng 1 lần ghi).
     Trả về (số dòng đã cập nhật, lỗi | None).
     """
     if not updates:
@@ -1743,18 +1748,26 @@ def update_patient_status_batch(creds_data, sheet_id, sheet_name, updates):
         col_letter = gspread.utils.rowcol_to_a1(1, headers.index(COL_STATUS) + 1)
         col_letter = "".join(ch for ch in col_letter if ch.isalpha())
 
+        src_col_letter = None
+        if COL_SOURCE in headers:
+            src_col_letter = gspread.utils.rowcol_to_a1(1, headers.index(COL_SOURCE) + 1)
+            src_col_letter = "".join(ch for ch in src_col_letter if ch.isalpha())
+
         body = []
         for u in updates:
             sheet_row, new_status = u[0], u[1]
             stt = u[2] if len(u) > 2 else None
+            new_source = u[3] if len(u) > 3 else None
             if stt is not None:
                 resolved_row, err = _resolve_row_by_stt(ws, headers, stt)
                 if err:
                     return len(body), err
                 sheet_row = resolved_row
             body.append({"range": f"{col_letter}{sheet_row}", "values": [[new_status]]})
+            if new_source is not None and src_col_letter is not None:
+                body.append({"range": f"{src_col_letter}{sheet_row}", "values": [[new_source]]})
         ws.batch_update(body, value_input_option="USER_ENTERED")
-        return len(body), None
+        return len(updates), None
     except Exception as e:
         return 0, f"Lỗi cập nhật hàng loạt: {type(e).__name__}: {e}"
 
@@ -1803,6 +1816,13 @@ def update_patient_fields(creds_data, sheet_id, sheet_name, sheet_row, field_val
 # nhật ký bệnh nhân THỰC TẾ đến khám (file "Báo cáo ĐK KCB" Minh Lộ),
 # không phụ thuộc đúng 1 ngày (bệnh nhân có thể đến sớm/muộn hơn hẹn).
 # ═══════════════════════════════════════════════════════════════
+
+def _blank_source(v):
+    """True nếu giá trị NGUỒN BỆNH NHÂN coi như TRỐNG (bệnh nhân đăng ký
+    online qua Form, chưa được gắn nhãn nguồn) — dùng thống nhất ở cả bộ lọc
+    phạm vi đối chiếu tự động lẫn lúc ghi cập nhật ngược lại Sheet."""
+    return str(v or "").strip() in ("", "nan", "N/A", "—", "None")
+
 
 def _norm_name(s):
     """Chuẩn hoá tên để so khớp:
@@ -4382,9 +4402,7 @@ if st.session_state.metrics:
             '<span class="sh-txt">Đối Chiếu Bệnh Nhân Đã Hẹn Với Thực Tế Đến Khám</span></div>',
             unsafe_allow_html=True
         )
-        gtab_tk, gtab_vl = st.tabs(["🧮 Tái Khám — Đối Chiếu Tự Động", "📝 Vãng Lai — Check Thủ Công"])
-
-        with gtab_tk:
+        with st.container():
             st.markdown("""
             <div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:12px;
                         padding:1rem 1.2rem;margin-bottom:1rem;font-size:0.83rem;color:#1e40af">
@@ -4435,27 +4453,33 @@ if st.session_state.metrics:
                     st.markdown(f"""
                     <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:12px;
                                 padding:0.9rem 1.1rem;margin-bottom:0.9rem;font-size:0.82rem;color:#334155">
-                      📅 Danh sách gốc: bệnh nhân <b>từ khoa / tái khám</b> có <b>NGÀY KHÁM</b> từ
+                      📅 Danh sách gốc: bệnh nhân <b>từ khoa / tái khám</b>, bệnh nhân
+                      <b>đăng ký online qua Form</b> (nguồn đang trống — dùng chính ngày họ
+                      chọn trong Form làm "ngày hẹn ảo"), và bệnh nhân đã gắn nhãn <b>vãng lai</b>
+                      có <b>NGÀY KHÁM</b> từ
                       <b>{range_start.strftime('%d/%m/%Y')}</b> đến <b>{range_end.strftime('%d/%m/%Y')}</b>
-                      ({RECONCILE_LOOKBACK_DAYS} ngày gần nhất) và đang <b>CHƯA KHÁM</b>.
-                      <i>(Bệnh nhân vãng lai check ở tab bên cạnh — không cần thuật toán vì không có
-                      lịch hẹn cố định để đối chiếu).</i><br>
+                      ({RECONCILE_LOOKBACK_DAYS} ngày gần nhất) và đang <b>CHƯA KHÁM</b>.<br>
                       🔍 Với mỗi bệnh nhân, chỉ chấp nhận lượt đến khám thực tế nằm trong cửa sổ
                       <b>[Ngày hẹn − {RECONCILE_WINDOW_BEFORE}, min(Ngày hẹn + {RECONCILE_WINDOW_AFTER}, Hôm nay)]</b>
                       — cửa sổ tự thu hẹp khi ngày hẹn gần hôm nay, để không nhầm sang một đợt khám
-                      <i>khác</i> (vd. đợt khám cũ) của cùng bệnh nhân.
+                      <i>khác</i> (vd. đợt khám cũ) của cùng bệnh nhân.<br>
+                      🏷️ Bệnh nhân đăng ký online (nguồn trống) mà đối chiếu ra <b>đã đến khám</b> sẽ được
+                      tự động gán <b>NGUỒN BỆNH NHÂN = "BỆNH NHÂN VÃNG LAI"</b> luôn khi cập nhật Sheet.
                     </div>
                     """, unsafe_allow_html=True)
 
                     df_full_src = m.get("df_full", df)
+                    src_str = df_full_src[COL_SOURCE].astype(str).str.strip()
+                    mask_khoa  = src_str.str.contains("khoa|tái|nội trú|xuất viện|tai", case=False, na=False)
+                    mask_blank = src_str.apply(_blank_source)
+                    mask_vl    = src_str.str.contains("vãng lai|vang lai|ngoài|ngoai", case=False, na=False)
                     scope_df = df_full_src[
                         df_full_src["_date"].notna()
                         & (df_full_src["_date"].dt.date >= range_start)
                         & (df_full_src["_date"].dt.date <= range_end)
                         & (~df_full_src[COL_STATUS].astype(str).str.upper()
                              .str.contains(STATUS_ATTENDED.upper(), na=False))
-                        & (df_full_src[COL_SOURCE].astype(str)
-                             .str.contains("khoa|tái|nội trú|xuất viện|tai", case=False, na=False))
+                        & (mask_khoa | mask_blank | mask_vl)
                     ]
 
                     if COL_STT not in scope_df.columns:
@@ -4469,6 +4493,7 @@ if st.session_state.metrics:
                     sheet_patients = []
                     for idx2, row in scope_df.iterrows():
                         exam_date = row["_date"].date() if pd.notna(row.get("_date")) else None
+                        src_now = row.get(COL_SOURCE, "")
                         sheet_patients.append({
                             "sheet_row": int(idx2) + 2,
                             "stt": row.get(COL_STT, "") if COL_STT in row.index else "",
@@ -4478,11 +4503,19 @@ if st.session_state.metrics:
                             "birth_year": row.get(COL_BIRTH_YEAR, ""),
                             "age": row.get(COL_AGE, "") if COL_AGE in row.index else "",
                             "exam_date": exam_date,
-                            "source": row.get(COL_SOURCE, ""),
+                            "source": src_now,
                             "status_now": row.get(COL_STATUS, ""),
+                            "source_is_blank": _blank_source(src_now),
                         })
 
-                    st.caption(f"Sẽ kiểm tra **{len(sheet_patients)}** bệnh nhân từ khoa/tái khám chưa khám.")
+                    n_khoa_scope  = int(mask_khoa[scope_df.index].sum()) if len(scope_df) else 0
+                    n_blank_scope = int(mask_blank[scope_df.index].sum()) if len(scope_df) else 0
+                    n_vl_scope    = int(mask_vl[scope_df.index].sum()) if len(scope_df) else 0
+                    st.caption(
+                        f"Sẽ kiểm tra **{len(sheet_patients)}** bệnh nhân chưa khám "
+                        f"({n_khoa_scope} từ khoa/tái khám · {n_blank_scope} đăng ký online qua Form · "
+                        f"{n_vl_scope} đã gắn nhãn vãng lai)."
+                    )
 
                     if st.button("🔍 Bắt Đầu Đối Chiếu", type="primary", use_container_width=True,
                                  disabled=(len(sheet_patients) == 0)):
@@ -4604,7 +4637,10 @@ if st.session_state.metrics:
                                     "SĐT": r.get("phone", "") or "—",
                                     "Năm sinh": r.get("birth_year", "") or "—",
                                     "Tuổi": r.get("age", "") or "—",
-                                    "Nguồn bệnh nhân": r.get("source", "") or "—",
+                                    "Nguồn bệnh nhân": (
+                                        "🏷️ sẽ gán: BỆNH NHÂN VÃNG LAI" if _blank_source(r.get("source"))
+                                        else (r.get("source", "") or "—")
+                                    ),
                                     "Ngày hẹn": r["exam_date"].strftime("%d/%m/%Y") if r["exam_date"] else "—",
                                     "Ngày thực đến": r["visit"]["NGÀY ĐK"] if r.get("visit") else "—",
                                     "Khớp qua": {1: "Tên + SĐT", 2: "Tên + Năm sinh"}.get(r.get("match_tier"), "—"),
@@ -4639,7 +4675,9 @@ if st.session_state.metrics:
                                     with st.spinner(f"Đang cập nhật {len(to_update)} dòng…"):
                                         n_ok, err_batch = update_patient_status_batch(
                                             creds_data, SHEET_ID, SHEET_NAME,
-                                            [(r["sheet_row"], STATUS_ATTENDED, r.get("stt") or None) for r in to_update]
+                                            [(r["sheet_row"], STATUS_ATTENDED, r.get("stt") or None,
+                                              "BỆNH NHÂN VÃNG LAI" if _blank_source(r.get("source")) else None)
+                                             for r in to_update]
                                         )
                                     if err_batch:
                                         st.error(f"❌ {err_batch}")
@@ -4737,7 +4775,8 @@ if st.session_state.metrics:
                                             else:
                                                 n_ok2, err2 = update_patient_status_batch(
                                                     creds_data, SHEET_ID, SHEET_NAME,
-                                                    [(r["sheet_row"], STATUS_ATTENDED, r.get("stt") or None)]
+                                                    [(r["sheet_row"], STATUS_ATTENDED, r.get("stt") or None,
+                                                      "BỆNH NHÂN VÃNG LAI" if _blank_source(r.get("source")) else None)]
                                                 )
                                                 if err2:
                                                     st.error(f"❌ {err2}")
@@ -4802,7 +4841,8 @@ if st.session_state.metrics:
                                         else:
                                             n_ok3, err3 = update_patient_status_batch(
                                                 creds_data, SHEET_ID, SHEET_NAME,
-                                                [(r["sheet_row"], STATUS_ATTENDED, r.get("stt") or None)]
+                                                [(r["sheet_row"], STATUS_ATTENDED, r.get("stt") or None,
+                                                  "BỆNH NHÂN VÃNG LAI" if _blank_source(r.get("source")) else None)]
                                             )
                                             if err3:
                                                 st.error(f"❌ {err3}")
@@ -4811,64 +4851,6 @@ if st.session_state.metrics:
                                                 st.session_state.metrics = None
                             render_pagination_bar("pg_rec_sot", sot_cur, sot_total, sot_start, sot_end, sot_tot,
                                                    widget_key="pg_rec_sot_bottom")
-
-        with gtab_vl:
-            st.markdown("""
-            <div style="background:#fff7ed;border:1px solid #fed7aa;border-radius:12px;
-                        padding:1rem 1.2rem;margin-bottom:1rem;font-size:0.83rem;color:#9a3412">
-              <b>📝 Check thủ công — Bệnh Nhân Vãng Lai</b><br>
-              Bệnh nhân vãng lai không có lịch hẹn cố định nên không đối chiếu bằng thuật toán được —
-              chọn khoảng ngày bên dưới rồi bấm <b>✏️</b> ở từng người để đánh dấu
-              <b>Đã khám</b> / <b>Chưa khám</b> trực tiếp.
-            </div>
-            """, unsafe_allow_html=True)
-
-            vl_c1, vl_c2, vl_c3 = st.columns([1, 1, 1.3])
-            with vl_c1:
-                vl_from = st.date_input(
-                    "Từ ngày", value=today - timedelta(days=RECONCILE_LOOKBACK_DAYS), key="vl_checkin_from"
-                )
-            with vl_c2:
-                vl_to = st.date_input("Đến ngày", value=today, key="vl_checkin_to")
-            with vl_c3:
-                vl_only_pending = st.checkbox(
-                    "Chỉ hiện bệnh nhân CHƯA khám", value=True, key="vl_checkin_only_pending"
-                )
-
-            if vl_from > vl_to:
-                st.warning('⚠️ "Từ ngày" đang sau "Đến ngày" — đổi lại giúp tao nhé.')
-            else:
-                vl_full_src = m.get("df_full", df)
-                src_col = vl_full_src[COL_SOURCE].astype(str).str.strip()
-                # Bao gồm: (1) nguồn là "vãng lai/ngoài" hoặc (2) nguồn trống/N/A/nan
-                mask_vl    = src_col.str.contains("vãng lai|vang lai|ngoài|ngoai", case=False, na=False)
-                mask_empty = src_col.isin(["", "nan", "N/A", "—", "None"]) | vl_full_src[COL_SOURCE].isna()
-                vl_mask = (
-                    vl_full_src["_date"].notna()
-                    & (vl_full_src["_date"].dt.date >= vl_from)
-                    & (vl_full_src["_date"].dt.date <= vl_to)
-                    & (mask_vl | mask_empty)
-                )
-                if vl_only_pending:
-                    vl_mask &= (~vl_full_src[COL_STATUS].astype(str).str.upper()
-                                  .str.contains(STATUS_ATTENDED.upper(), na=False))
-                vl_scope_df = vl_full_src[vl_mask]
-
-                n_vl    = int(mask_vl[vl_mask].sum())
-                n_empty = int(mask_empty[vl_mask].sum())
-                st.caption(
-                    f"**{len(vl_scope_df)}** bệnh nhân"
-                    + (" (đang CHƯA khám)" if vl_only_pending else "")
-                    + f" — {n_vl} có nguồn vãng lai · {n_empty} trống nguồn (sẽ được gán vãng lai khi lưu)"
-                )
-
-                render_upcoming_table(
-                    vl_scope_df,
-                    empty_msg="Không có bệnh nhân vãng lai nào trong khoảng ngày này.",
-                    dl_prefix="vang_lai_checkin",
-                    dl_key="dl_vl_checkin",
-                    page_state_key="pg_vl_checkin",
-                )
 
 
 
