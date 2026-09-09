@@ -1472,6 +1472,62 @@ def build_sheet_field_map(record, import_time_str):
     }
 
 
+def check_sheet_duplicates(df_full, candidate_records):
+    """
+    So khớp trùng giữa danh sách BỆNH NHÂN sắp import (candidate_records, đọc từ
+    file Minh Lộ 04-4, đã lọc theo Ngày Lập) với dữ liệu ĐÃ CÓ SẴN trên Google
+    Sheet (df_full — bản đầy đủ, không lọc theo trạng thái).
+
+    KHOÁ TRÙNG: Tên đã chuẩn hoá (bỏ dấu, viết hoa) + SỐ ĐIỆN THOẠI (đã chuẩn
+    hoá) + NGÀY KHÁM (dd/mm/yyyy). Nếu SĐT không xác định được (trống / không
+    hợp lệ) ở bản ghi mới hoặc trên Sheet, fallback so khớp bằng Tên + Ngày
+    Khám (không có SĐT để phân biệt 2 người trùng tên trùng ngày rất hiếm khi
+    xảy ra, nhưng vẫn được liệt vào "nghi trùng" để người dùng tự xem thay vì
+    ghi đè oan).
+
+    Trả về (new_records, dup_records):
+      new_records — chưa từng có trên Sheet, đủ điều kiện ghi vào.
+      dup_records — mỗi phần tử là bản ghi gốc kèm khoá "_existing_stt" (STT
+                     dòng đã có trên Sheet, nếu đọc được).
+    """
+    existing_full = {}       # (name_key, phone_key, date_key) -> stt
+    existing_namedate = {}   # (name_key, date_key) -> stt
+
+    if df_full is not None and len(df_full) > 0:
+        for _, row in df_full.iterrows():
+            name_k = _norm_name(row.get(COL_NAME, ""))
+            date_v = row.get("_date")
+            date_k = date_v.strftime("%d/%m/%Y") if pd.notna(date_v) else ""
+            if not name_k or not date_k:
+                continue
+            phone_k = _norm_phone_key(row.get(COL_PHONE, ""))
+            stt_v = row.get(COL_STT, "") if COL_STT in row.index else ""
+            if phone_k:
+                existing_full.setdefault((name_k, phone_k, date_k), stt_v)
+            existing_namedate.setdefault((name_k, date_k), stt_v)
+
+    new_records, dup_records = [], []
+    for r in candidate_records:
+        name_k = _norm_name(r.get("HỌ TÊN", ""))
+        date_k = (r.get("NGÀY HẸN", "") or "").strip()
+        phone_k = _norm_phone_key(r.get("SỐ ĐIỆN THOẠI", ""))
+
+        matched_stt = None
+        if phone_k and (name_k, phone_k, date_k) in existing_full:
+            matched_stt = existing_full[(name_k, phone_k, date_k)]
+        elif (name_k, date_k) in existing_namedate:
+            matched_stt = existing_namedate[(name_k, date_k)]
+
+        if matched_stt is not None:
+            r2 = dict(r)
+            r2["_existing_stt"] = matched_stt
+            dup_records.append(r2)
+        else:
+            new_records.append(r)
+
+    return new_records, dup_records
+
+
 def push_to_sheet(creds_data, sheet_id, sheet_name, records):
     """
     Append parsed Minh Lo records into the MAIN Google Sheet tab.
@@ -2866,12 +2922,12 @@ if st.session_state.metrics:
     tab1, tab2, tab3, tab3b, tab4, tab5, tab6, tab7, tab8 = st.tabs([
         "📊 Tổng Quan",
         "🔍 Tìm Theo Ngày",
-        "📅 3 Ngày Tới",
+        "📅 DS Bệnh Nhân Khám 3 Ngày Tới",
         "📞 Nhắc Lịch BN Chưa Đến",
         "🏥 Nguồn Bệnh Nhân",
         "📈 Báo Cáo",
         "👤 Bệnh Nhân",
-        "📥 Import Từ Minh Lộ",
+        "📥 Thêm Bệnh Nhân Từ Lịch Hẹn Khám",
         "✅ Đối Chiếu Tái Khám",
     ])
 
@@ -4083,6 +4139,11 @@ if st.session_state.metrics:
           Thời gian đăng ký → Thời điểm import &nbsp;|&nbsp;
           Cam kết & Đồng ý → "CÓ"
         </div>
+        <div style="background:#fffbeb;border:1px solid #fde68a;border-radius:12px;
+                    padding:0.8rem 1.2rem;margin-bottom:1rem;font-size:0.83rem;color:#92400e">
+          <b>⚠️ Đúng file cần upload:</b> file Excel <b>04-4</b> (Danh sách bệnh nhân hẹn khám lại)
+          — không nhầm với file 01-1 dùng ở tab "Đối Chiếu Tái Khám".
+        </div>
         """, unsafe_allow_html=True)
 
         # Always write to main sheet tab
@@ -4205,25 +4266,55 @@ if st.session_state.metrics:
                 st.markdown(
                     f'<div class="pg-info" style="text-align:left;margin:0.3rem 0 1rem">'
                     f'Đã chọn <b>{len(selected_lap_dates)}</b> ngày lập · '
-                    f'<b>{len(filtered_records)}</b> / {len(records)} bệnh nhân sẽ được ghi vào Sheet</div>',
+                    f'<b>{len(filtered_records)}</b> / {len(records)} bệnh nhân trong phạm vi đã chọn</div>',
                     unsafe_allow_html=True
                 )
 
-                # Preview table (chỉ hiển thị các bản ghi ĐÃ CHỌN theo Ngày Lập)
+                # ═══════════════════════════════════════════════
+                # KIỂM TRA TRÙNG VỚI DỮ LIỆU ĐÃ CÓ TRÊN SHEET
+                # Khoá trùng: Tên chuẩn hoá + SĐT (nếu có) + NGÀY KHÁM.
+                # Chạy trên df_full (không lọc trạng thái) để không bỏ sót
+                # bệnh nhân đã có nhưng đang ở trạng thái "đã khám".
+                # ═══════════════════════════════════════════════
+                df_full_dedup = m.get("df_full", df)
+                new_records, dup_records = check_sheet_duplicates(df_full_dedup, filtered_records)
+
+                if filtered_records:
+                    if dup_records:
+                        st.warning(
+                            f"🔁 **{len(dup_records)}** bệnh nhân đã có sẵn trên Sheet "
+                            f"(trùng Tên + SĐT/Ngày khám) — sẽ **bỏ qua**, không ghi lại. "
+                            f"Còn **{len(new_records)}** bệnh nhân mới sẽ được import."
+                        )
+                        with st.expander(f"👀 Xem {len(dup_records)} bệnh nhân đã có sẵn (bị bỏ qua)"):
+                            dup_view = pd.DataFrame([
+                                {
+                                    "STT đã có trên Sheet": d.get("_existing_stt", ""),
+                                    "Họ tên": d.get("HỌ TÊN", ""),
+                                    "SĐT": d.get("SỐ ĐIỆN THOẠI", ""),
+                                    "Ngày khám": d.get("NGÀY HẸN", ""),
+                                }
+                                for d in dup_records
+                            ])
+                            st.dataframe(dup_view, use_container_width=True, hide_index=True)
+                    else:
+                        st.success(f"✅ Không có bệnh nhân nào trùng với dữ liệu đã có trên Sheet — cả **{len(new_records)}** bệnh nhân đều mới.")
+
+                # Preview table (chỉ hiển thị các bản ghi MỚI, sẽ được ghi vào Sheet)
                 st.markdown(
                     '<div class="sh"><div class="sh-dot" style="background:#3b82f6"></div>'
-                    f'<span class="sh-txt">Xem Trước Dữ Liệu Đã Chọn '
-                    f'({min(10,len(filtered_records))}/{len(filtered_records)} bệnh nhân)</span></div>',
+                    f'<span class="sh-txt">Xem Trước Dữ Liệu Sẽ Import '
+                    f'({min(10,len(new_records))}/{len(new_records)} bệnh nhân mới)</span></div>',
                     unsafe_allow_html=True
                 )
-                if filtered_records:
-                    preview_df = pd.DataFrame(filtered_records[:10])
+                if new_records:
+                    preview_df = pd.DataFrame(new_records[:10])
                     st.dataframe(preview_df, use_container_width=True, hide_index=True, height=280)
                 else:
-                    st.info("Chưa có bệnh nhân nào được chọn để xem trước.")
+                    st.info("Không có bệnh nhân mới nào để import (tất cả đã có sẵn trên Sheet, hoặc chưa chọn ngày lập).")
 
-                # Stats (tính trên phần ĐÃ CHỌN, phản ánh đúng những gì sắp được ghi)
-                ngay_hen_list = [r["NGÀY HẸN"] for r in filtered_records if r.get("NGÀY HẸN")]
+                # Stats (tính trên phần MỚI — phản ánh đúng những gì sắp được ghi)
+                ngay_hen_list = [r["NGÀY HẸN"] for r in new_records if r.get("NGÀY HẸN")]
                 ngay_set = set(ngay_hen_list)
                 st.markdown(f"""
                 <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:0.6rem;margin:0.8rem 0">
@@ -4232,48 +4323,50 @@ if st.session_state.metrics:
                     <div class="kc-val" style="font-size:1.6rem">{len(records)}</div>
                   </div>
                   <div class="kc kc-t" style="padding:0.8rem 1rem">
-                    <div class="kc-lbl">Đã Chọn Để Ghi</div>
-                    <div class="kc-val" style="font-size:1.6rem;color:#1d4ed8">{len(filtered_records)}</div>
+                    <div class="kc-lbl">Mới — Sẽ Ghi</div>
+                    <div class="kc-val" style="font-size:1.6rem;color:#1d4ed8">{len(new_records)}</div>
                   </div>
                   <div class="kc kc-g" style="padding:0.8rem 1rem">
                     <div class="kc-lbl">Số Ngày Hẹn</div>
                     <div class="kc-val" style="font-size:1.6rem">{len(ngay_set)}</div>
                   </div>
                   <div class="kc kc-v" style="padding:0.8rem 1rem">
-                    <div class="kc-lbl">Chưa Khám</div>
-                    <div class="kc-val" style="font-size:1.6rem">{sum(1 for r in filtered_records if "chưa" in r.get("ĐÃ KHÁM","").lower())}</div>
+                    <div class="kc-lbl">Đã Có Sẵn — Bỏ Qua</div>
+                    <div class="kc-val" style="font-size:1.6rem">{len(dup_records)}</div>
                   </div>
                 </div>
                 """, unsafe_allow_html=True)
 
                 col_imp1, col_imp2 = st.columns([1, 1])
                 with col_imp1:
-                    # Download as CSV (no Google Sheet needed) — chỉ phần đã chọn
-                    csv_imp = pd.DataFrame(filtered_records).to_csv(index=False, encoding="utf-8-sig")
+                    # Download as CSV (no Google Sheet needed) — chỉ phần MỚI
+                    csv_imp = pd.DataFrame(new_records).to_csv(index=False, encoding="utf-8-sig")
                     st.download_button(
-                        label=f"⬇️ Tải CSV ({len(filtered_records)} BN đã chọn)",
+                        label=f"⬇️ Tải CSV ({len(new_records)} BN mới)",
                         data=csv_imp.encode("utf-8-sig"),
                         file_name=f"henkham_minhloc_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
                         mime="text/csv",
-                        disabled=(len(filtered_records) == 0),
+                        disabled=(len(new_records) == 0),
                     )
                 with col_imp2:
-                    if st.button(f"📤 Import {len(filtered_records)} BN Vào Google Sheet",
-                                 use_container_width=True, disabled=(len(filtered_records) == 0)):
+                    if st.button(f"📤 Import {len(new_records)} BN Mới Vào Google Sheet",
+                                 use_container_width=True, disabled=(len(new_records) == 0)):
                         if not creds_data:
                             st.error("❌ Chưa có credentials. Kiểm tra Streamlit Secrets.")
                         else:
-                            with st.spinner(f"Đang ghi {len(filtered_records)} bệnh nhân vào Sheet…"):
+                            with st.spinner(f"Đang ghi {len(new_records)} bệnh nhân vào Sheet…"):
                                 rows_ok, err_push = push_to_sheet(
-                                    creds_data, SHEET_ID, SHEET_NAME, filtered_records
+                                    creds_data, SHEET_ID, SHEET_NAME, new_records
                                 )
                             if err_push:
                                 st.error(f"❌ {err_push}")
                                 st.info("💡 Nếu lỗi Permission: vào Google Sheet → Share → đổi Service Account từ Viewer thành Editor.")
                             else:
                                 st.success(
-                                    f"✅ Đã thêm thành công **{rows_ok}** dòng vào sheet chính "
-                                    f"(theo {len(selected_lap_dates)} ngày lập đã chọn)!"
+                                    f"✅ Đã thêm thành công **{rows_ok}** dòng mới vào sheet chính "
+                                    f"(theo {len(selected_lap_dates)} ngày lập đã chọn"
+                                    + (f" · đã tự động bỏ qua {len(dup_records)} bệnh nhân trùng" if dup_records else "")
+                                    + ")!"
                                 )
                                 st.info("🔄 Quay lại tab **📊 Tổng Quan** và nhấn **Làm mới** để xem dữ liệu mới.")
                                 st.balloons()
@@ -4300,6 +4393,11 @@ if st.session_state.metrics:
               2. Chọn <b>khoảng ngày rộng</b> (vd. cả tháng, hoặc từ ngày hẹn sớm nhất tới nay) → Export Excel<br>
               3. Upload file vào đây — hệ thống sẽ tự dò từng bệnh nhân <b>chưa khám</b> trên Sheet
               xem có xuất hiện trong log này không, <b>không cần đúng 1 ngày</b> (đến sớm/muộn vẫn bắt được)
+            </div>
+            <div style="background:#fffbeb;border:1px solid #fde68a;border-radius:12px;
+                        padding:0.8rem 1.2rem;margin-bottom:1rem;font-size:0.83rem;color:#92400e">
+              ⚠️ <b>Đúng file cần upload:</b> file Excel <b>01-1</b> (Báo cáo ĐK KCB — nhật ký bệnh nhân
+              thực tế đến khám) — không nhầm với file 04-4 dùng ở tab "Thêm Bệnh Nhân Từ Lịch Hẹn Khám".
             </div>
             """, unsafe_allow_html=True)
 
