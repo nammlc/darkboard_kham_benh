@@ -1951,6 +1951,107 @@ def _parse_age(s):
 RECONCILE_LOOKBACK_DAYS = 7   # danh sách gốc: bệnh nhân có NGÀY KHÁM trong X ngày gần đây
 RECONCILE_WINDOW_BEFORE = 2   # cửa sổ so khớp: chấp nhận đến SỚM hơn hẹn tối đa 2 ngày
 RECONCILE_WINDOW_AFTER  = 3   # và MUỘN hơn hẹn tối đa 3 ngày — nhưng KHÔNG BAO GIỜ vượt quá HÔM NAY
+
+# ═══════════════════════════════════════════════════════════════
+# ĐỐI CHIẾU TRÙNG — TÁI KHÁM (TỪ KHOA) vs ĐĂNG KÝ FORM
+# Phát hiện bệnh nhân ĐÃ CÓ sẵn lịch tái khám (import từ khoa) nhưng gần
+# đến ngày hẹn lại TỰ ĐĂNG KÝ THÊM 1 LẦN qua Form online (nguồn trống) —
+# sinh ra 2 dòng trên Sheet cho CÙNG 1 đợt khám. Đây là đối chiếu Sheet
+# với CHÍNH NÓ (không cần file ngoài), CHỈ GẮN NHÃN — không tự xoá dòng
+# nào — người dùng tự kiểm tra & xoá tay dòng Form bị trùng.
+# ═══════════════════════════════════════════════════════════════
+DUPLICATE_WINDOW_DAYS = 5  # lệch ngày hẹn tối đa giữa dòng tái khám và dòng Form để coi là cùng 1 đợt
+DUP_TAG_PREFIX = "⚠️ TRÙNG"  # tiền tố ghi vào NGUỒN BỆNH NHÂN của dòng Form khi gắn nhãn trùng
+
+
+def find_duplicate_tk_form(khoa_patients, form_patients, window_days=DUPLICATE_WINDOW_DAYS):
+    """
+    So khớp các dòng "từ khoa / tái khám" (đã có sẵn lịch hẹn do import từ
+    khoa) với các dòng "đăng ký online qua Form" (nguồn trống) TRÊN CÙNG 1
+    SHEET, để phát hiện trường hợp 1 bệnh nhân đã có lịch tái khám nhưng vẫn
+    tự đăng ký thêm 1 lần nữa qua Form gần ngày hẹn.
+
+    khoa_patients, form_patients: list dict {"sheet_row","stt","name","phone",
+      "birth_year","exam_date","source"}.
+
+    THUẬT TOÁN 3 TẦNG — giống hệt tinh thần reconcile_attendance, ưu tiên
+    theo thứ tự, dừng ở tầng đầu tiên tìm được ứng viên phù hợp:
+      Tầng 1 — Tên + SĐT khớp chính xác           → chắc chắn trùng
+      Tầng 2 — Tên + Năm sinh khớp (lệch tối đa 1) → chắc chắn trùng
+      Tầng 3 — chỉ Tên giống (không SĐT/năm sinh)  → CẦN KIỂM TRA TAY,
+               không bao giờ tự kết luận chắc chắn dù tên khớp 100%.
+    Chỉ ghép các cặp có NGÀY HẸN lệch nhau tối đa `window_days` ngày.
+
+    Mỗi dòng Form chỉ được ghép với TỐI ĐA 1 dòng khoa (ghép tốt nhất theo
+    độ giống tên), tránh 1 dòng Form bị gán trùng cho nhiều người.
+
+    Trả về list dict: {"khoa": p_khoa, "form": p_form, "match_tier" (1/2/3),
+    "score" (0-100), "day_diff"}.
+    """
+    NAME_RATIO_MIN = 0.92
+    used_form_idx = set()
+    results = []
+
+    for pk in khoa_patients:
+        k_name = pk.get("name", "")
+        k_phone = _norm_phone_key(pk.get("phone"))
+        try:
+            k_birth = int(str(pk.get("birth_year") or "").strip())
+        except Exception:
+            k_birth = None
+        k_date = pk.get("exam_date")
+
+        candidates = []
+        for j, pf in enumerate(form_patients):
+            if j in used_form_idx:
+                continue
+            f_date = pf.get("exam_date")
+            if k_date and f_date and abs((f_date - k_date).days) > window_days:
+                continue
+            ok, ratio = _name_match_ok(k_name, pf.get("name", ""), NAME_RATIO_MIN)
+            if ok:
+                candidates.append((ratio, j, pf))
+
+        if not candidates:
+            continue
+
+        best = None  # (ratio, j, pf, tier)
+
+        # ── Tầng 1 — Tên + SĐT ──
+        if k_phone:
+            for ratio, j, pf in candidates:
+                if _norm_phone_key(pf.get("phone")) == k_phone:
+                    if best is None or ratio > best[0]:
+                        best = (ratio, j, pf, 1)
+
+        # ── Tầng 2 — Tên + Năm sinh (±1) ──
+        if best is None and k_birth is not None:
+            for ratio, j, pf in candidates:
+                try:
+                    f_birth = int(str(pf.get("birth_year") or "").strip())
+                except Exception:
+                    continue
+                if abs(f_birth - k_birth) <= 1:
+                    if best is None or ratio > best[0]:
+                        best = (ratio, j, pf, 2)
+
+        # ── Tầng 3 — chỉ Tên (ứng viên giống tên nhất) ──
+        if best is None:
+            ratio, j, pf = max(candidates, key=lambda c: c[0])
+            best = (ratio, j, pf, 3)
+
+        ratio, j, pf, tier = best
+        used_form_idx.add(j)
+        day_diff = None
+        if k_date and pf.get("exam_date"):
+            day_diff = (pf["exam_date"] - k_date).days
+        results.append({
+            "khoa": pk, "form": pf,
+            "match_tier": tier, "score": round(100 * ratio, 1),
+            "day_diff": day_diff,
+        })
+
+    return results
                               # (xem hàm bên dưới) để không "vồ nhầm" hồ sơ của một đợt khám CŨ khác.
 
 def reconcile_attendance(sheet_patients, visit_records,
@@ -4919,6 +5020,208 @@ if st.session_state.metrics:
                         with tab_vl:
                             _render_reconcile_group(results_vl, sheet_patients_saved, creds_data, key_prefix="vl")
 
+        # ════════════════════════════════════
+        # ĐỐI CHIẾU TRÙNG — TÁI KHÁM (TỪ KHOA) vs ĐĂNG KÝ FORM
+        # Tự đối chiếu Sheet với chính nó — KHÔNG cần upload file ngoài.
+        # CHỈ GẮN NHÃN, không tự xoá dòng nào.
+        # ════════════════════════════════════
+        st.markdown('<div style="height:1px;background:#e2e8f0;margin:1.6rem 0"></div>', unsafe_allow_html=True)
+        st.markdown(
+            '<div class="sh"><div class="sh-dot" style="background:#8b5cf6"></div>'
+            '<span class="sh-txt">🔁 Đối Chiếu Trùng — Tái Khám (Từ Khoa) ↔ Đăng Ký Form</span></div>',
+            unsafe_allow_html=True
+        )
+        st.markdown(f"""
+        <div style="background:#f5f3ff;border:1px solid #ddd6fe;border-radius:12px;
+                    padding:0.9rem 1.1rem;margin-bottom:0.9rem;font-size:0.83rem;color:#4c1d95">
+          Quét những bệnh nhân <b>đã có sẵn lịch tái khám (từ khoa)</b> nhưng gần ngày hẹn lại
+          <b>tự đăng ký thêm qua Form online</b> (nguồn trống) cho CÙNG 1 đợt khám — khớp theo
+          Tên + SĐT / Tên + Năm sinh, ngày hẹn lệch nhau tối đa <b>{DUPLICATE_WINDOW_DAYS} ngày</b>.
+          Quét <b>bất kể trạng thái đã/chưa khám</b> — kể cả khi dòng tái khám đã được đối chiếu
+          "Đã khám" ở mục trên rồi, để bắt được cả trường hợp dòng Form đăng ký trước/sau đó vẫn
+          còn sót lại (và có nguy cơ sau này tự khớp trùng, gây <b>đếm trùng 1 lượt khám thành 2</b>).<br>
+          🚫 <b>Không tự xoá gì cả</b> — chỉ <b>gắn nhãn</b> "{DUP_TAG_PREFIX}" vào cột NGUỒN BỆNH NHÂN
+          của dòng Form nghi trùng (và có thể gỡ "Đã khám" nếu cần), để bạn tự kiểm tra và xoá tay
+          dòng đó trên Google Sheet.
+        </div>
+        """, unsafe_allow_html=True)
+
+        if st.button("🔁 Quét Trùng Tái Khám ↔ Form", use_container_width=True, key="dup_scan_btn"):
+            df_full_dup = m.get("df_full", df)
+            src_str_dup = df_full_dup[COL_SOURCE].astype(str).str.strip()
+            mask_khoa_dup = src_str_dup.str.contains("khoa|tái|nội trú|xuất viện|tai", case=False, na=False)
+            mask_blank_dup = src_str_dup.apply(_blank_source)
+            # LƯU Ý: KHÔNG lọc theo trạng thái "chưa khám" ở đây nữa — mục đích
+            # là tìm dòng DƯ THỪA, không phải tìm dòng chưa xử lý. Một dòng
+            # tái khám dù ĐÃ được đánh dấu "Đã khám" (qua Bước 1/2 ở trên) vẫn
+            # cần đối chiếu với dòng Form, vì rất có thể chính dòng Form đó
+            # SAU NÀY cũng tự khớp trùng với đúng lượt khám đó → 1 lượt khám
+            # thực tế bị đếm thành 2 dòng "Đã khám".
+            range_start_dup = today - timedelta(days=RECONCILE_LOOKBACK_DAYS)
+            in_range_dup = (
+                df_full_dup["_date"].notna() & (df_full_dup["_date"].dt.date >= range_start_dup)
+            )
+
+            def _to_dup_patient_list(mask):
+                sub = df_full_dup[mask & in_range_dup]
+                out = []
+                for idx3, row in sub.iterrows():
+                    out.append({
+                        "sheet_row": int(idx3) + 2,
+                        "stt": row.get(COL_STT, "") if COL_STT in row.index else "",
+                        "name": row.get(COL_NAME, ""),
+                        "phone": row.get(COL_PHONE, ""),
+                        "birth_year": row.get(COL_BIRTH_YEAR, ""),
+                        "exam_date": row["_date"].date() if pd.notna(row.get("_date")) else None,
+                        "source": row.get(COL_SOURCE, ""),
+                        "status_now": row.get(COL_STATUS, ""),
+                    })
+                return out
+
+            khoa_list_dup = _to_dup_patient_list(mask_khoa_dup)
+            form_list_dup = _to_dup_patient_list(mask_blank_dup)
+            with st.spinner("Đang quét trùng…"):
+                dup_pairs = find_duplicate_tk_form(khoa_list_dup, form_list_dup)
+            # Đánh dấu mức độ nghiêm trọng: cả 2 dòng đã "Đã khám" → đang bị
+            # đếm trùng 1 lượt khám thành 2 → ưu tiên xử lý trước tiên.
+            for d in dup_pairs:
+                khoa_att = STATUS_ATTENDED.upper() in str(d["khoa"].get("status_now", "")).upper()
+                form_att = STATUS_ATTENDED.upper() in str(d["form"].get("status_now", "")).upper()
+                if khoa_att and form_att:
+                    d["severity"] = "critical"   # đang đếm trùng thống kê
+                elif khoa_att or form_att:
+                    d["severity"] = "leftover"   # 1 bên đã khám, bên kia dư thừa
+                else:
+                    d["severity"] = "normal"     # cả 2 đều chưa khám
+            st.session_state["dup_pairs"] = dup_pairs
+            st.session_state["dup_scanned_at"] = datetime.now().strftime("%H:%M %d/%m/%Y")
+            st.caption(
+                f"Đã quét {len(khoa_list_dup)} dòng tái khám (từ khoa) và "
+                f"{len(form_list_dup)} dòng đăng ký Form (nguồn trống), trong "
+                f"{RECONCILE_LOOKBACK_DAYS} ngày gần nhất — bất kể trạng thái đã/chưa khám."
+            )
+            if not dup_pairs:
+                st.success("✅ Không phát hiện trường hợp nghi trùng nào trong phạm vi quét.")
+
+        dup_pairs = st.session_state.get("dup_pairs")
+        if dup_pairs:
+            n_critical = sum(1 for d in dup_pairs if d["severity"] == "critical")
+            n_leftover = sum(1 for d in dup_pairs if d["severity"] == "leftover")
+            n_normal = sum(1 for d in dup_pairs if d["severity"] == "normal")
+            st.warning(
+                f"🔁 Phát hiện **{len(dup_pairs)}** cặp nghi trùng "
+                f"(quét lúc {st.session_state.get('dup_scanned_at', '')}): "
+                f"**🔴 {n_critical}** đang bị ĐẾM TRÙNG (cả 2 dòng đều \"Đã khám\") · "
+                f"**🟡 {n_leftover}** dư thừa (1 bên đã khám) · "
+                f"**⚪ {n_normal}** cả 2 chưa khám."
+            )
+            SEVERITY_RANK = {"critical": 0, "leftover": 1, "normal": 2}
+            sev_label = {
+                "critical": "🔴 ĐẾM TRÙNG",
+                "leftover": "🟡 DƯ THỪA",
+                "normal": "⚪ Bình thường",
+            }
+            for d in sorted(dup_pairs, key=lambda x: (SEVERITY_RANK[x["severity"]], x["match_tier"])):
+                pk, pf = d["khoa"], d["form"]
+                tier_label = {1: "Tên + SĐT", 2: "Tên + Năm sinh", 3: "❓ Chỉ khớp tên"}[d["match_tier"]]
+                already_tagged = str(pf.get("source", "")).strip().startswith(DUP_TAG_PREFIX)
+                khoa_attended = STATUS_ATTENDED.upper() in str(pk.get("status_now", "")).upper()
+                form_attended = STATUS_ATTENDED.upper() in str(pf.get("status_now", "")).upper()
+                day_diff_str = (
+                    f"{'+' if d['day_diff'] and d['day_diff'] > 0 else ''}{d['day_diff']}"
+                    if d["day_diff"] is not None else "—"
+                )
+                with st.expander(
+                    f"{sev_label[d['severity']]}  ·  {pk['name']}  ·  khớp {tier_label}  ·  "
+                    f"lệch ngày hẹn {day_diff_str}  ·  độ giống tên {d['score']:.0f}%"
+                    + ("  ·  🏷️ đã gắn nhãn" if already_tagged else "")
+                ):
+                    if d["severity"] == "critical":
+                        st.error(
+                            "🔴 CẢ 2 dòng đều đang được tính là \"Đã khám\" — rất có thể 1 lượt khám "
+                            "thực tế đang bị đếm thành 2 trong thống kê. Nên gỡ trạng thái \"Đã khám\" "
+                            "của dòng Form (dòng dư thừa) để số liệu đúng lại."
+                        )
+                    elif d["severity"] == "leftover":
+                        st.info(
+                            "🟡 Một bên đã ghi nhận \"Đã khám\", dòng còn lại vẫn \"chưa khám\" — "
+                            "khả năng cao dòng \"chưa khám\" là dòng dư thừa, nên gắn nhãn để dọn."
+                        )
+
+                    cA, cB = st.columns(2)
+                    with cA:
+                        st.markdown("**📋 Dòng tái khám (từ khoa) — sẽ GIỮ LẠI**")
+                        st.write(f"STT: {pk.get('stt') or '—'}")
+                        st.write(f"SĐT: {pk.get('phone') or '—'}")
+                        st.write(f"Năm sinh: {pk.get('birth_year') or '—'}")
+                        st.write(f"Ngày hẹn: {pk['exam_date'].strftime('%d/%m/%Y') if pk['exam_date'] else '—'}")
+                        st.write(f"Nguồn: {pk.get('source') or '—'}")
+                        st.write(f"Trạng thái: {'✅ Đã khám' if khoa_attended else '⏳ Chưa khám'}")
+                    with cB:
+                        st.markdown("**📝 Dòng đăng ký Form — NGHI TRÙNG**")
+                        st.write(f"STT: {pf.get('stt') or '—'}")
+                        st.write(f"SĐT: {pf.get('phone') or '—'}")
+                        st.write(f"Năm sinh: {pf.get('birth_year') or '—'}")
+                        st.write(f"Ngày hẹn: {pf['exam_date'].strftime('%d/%m/%Y') if pf['exam_date'] else '—'}")
+                        st.write(f"Nguồn hiện tại: {pf.get('source') or '(trống)'}")
+                        st.write(f"Trạng thái: {'✅ Đã khám' if form_attended else '⏳ Chưa khám'}")
+
+                    if already_tagged:
+                        st.caption(
+                            "✅ Dòng Form này đã được gắn nhãn trùng — vào Google Sheet để kiểm tra & xoá tay."
+                        )
+                    else:
+                        tag = (
+                            f"{DUP_TAG_PREFIX} - đã có lịch tái khám STT "
+                            f"{pk.get('stt') or pk['sheet_row']} "
+                            f"({pk['exam_date'].strftime('%d/%m/%Y') if pk['exam_date'] else '—'})"
+                        )
+                        if form_attended:
+                            bt1, bt2 = st.columns(2)
+                        else:
+                            bt1 = st.container()
+                            bt2 = None
+                        with bt1:
+                            if st.button(
+                                "🏷️ Gắn nhãn TRÙNG" + ("" if not form_attended else " (giữ nguyên Đã khám)"),
+                                key=f"dup_tag_{pf['sheet_row']}", use_container_width=True,
+                                type="primary" if not form_attended else "secondary"
+                            ):
+                                if not creds_data:
+                                    st.error("❌ Chưa có credentials.")
+                                else:
+                                    ok, err_tag = update_patient_fields(
+                                        creds_data, SHEET_ID, SHEET_NAME, pf["sheet_row"],
+                                        {COL_SOURCE: tag}, stt=pf.get("stt") or None
+                                    )
+                                    if ok:
+                                        st.success("✅ Đã gắn nhãn — vào Google Sheet để kiểm tra & xoá tay dòng này.")
+                                        st.session_state.metrics = None
+                                    else:
+                                        st.error(f"❌ {err_tag}")
+                        if form_attended:
+                            with bt2:
+                                if st.button(
+                                    "↩️ Gắn nhãn + Gỡ \"Đã khám\" (tránh đếm trùng)",
+                                    key=f"dup_untag_att_{pf['sheet_row']}", use_container_width=True,
+                                    type="primary"
+                                ):
+                                    if not creds_data:
+                                        st.error("❌ Chưa có credentials.")
+                                    else:
+                                        ok, err_tag = update_patient_fields(
+                                            creds_data, SHEET_ID, SHEET_NAME, pf["sheet_row"],
+                                            {COL_SOURCE: tag, COL_STATUS: STATUS_NOT_ATTENDED},
+                                            stt=pf.get("stt") or None
+                                        )
+                                        if ok:
+                                            st.success(
+                                                "✅ Đã gắn nhãn và gỡ \"Đã khám\" khỏi dòng Form — thống kê "
+                                                "không còn bị đếm trùng nữa. Vào Google Sheet để xoá tay dòng này."
+                                            )
+                                            st.session_state.metrics = None
+                                        else:
+                                            st.error(f"❌ {err_tag}")
 
 
 
