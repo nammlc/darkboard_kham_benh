@@ -5239,6 +5239,12 @@ if st.session_state.metrics:
                 tier_label = {1: "Tên + SĐT", 2: "Tên + Năm sinh", 3: "❓ Chỉ khớp tên"}[d["match_tier"]]
                 khoa_attended = STATUS_ATTENDED.upper() in str(pk.get("status_now", "")).upper()
                 form_attended = STATUS_ATTENDED.upper() in str(pf.get("status_now", "")).upper()
+                # Case đặc biệt: dòng Form (sắp bị xoá) đang là "Đã khám" nhưng
+                # dòng tái khám (sẽ GIỮ LẠI) vẫn "chưa khám" — nếu xoá thẳng
+                # dòng Form mà không xử lý gì thêm, sẽ MẤT DẤU luôn lượt khám
+                # thực tế đó. Đánh dấu để lúc xoá hàng loạt, tự cập nhật luôn
+                # dòng tái khám thành "Đã khám".
+                d["needs_status_transfer"] = form_attended and not khoa_attended
                 day_diff_str = (
                     f"{'+' if d['day_diff'] and d['day_diff'] > 0 else ''}{d['day_diff']}"
                     if d["day_diff"] is not None else "—"
@@ -5259,10 +5265,16 @@ if st.session_state.metrics:
                                 "🔴 CẢ 2 dòng đều đang được tính là \"Đã khám\" — 1 lượt khám thực tế đang "
                                 "bị đếm thành 2 trong thống kê. Xoá dòng Form (dòng dư thừa) để số liệu đúng lại."
                             )
+                        elif d["needs_status_transfer"]:
+                            st.info(
+                                "🟡 Dòng Form đang ghi \"Đã khám\" nhưng dòng tái khám vẫn \"chưa khám\" — "
+                                "khi xoá dòng Form, hệ thống sẽ **TỰ ĐỘNG cập nhật dòng tái khám thành "
+                                "\"Đã khám\"** để không mất dấu lượt khám thực tế."
+                            )
                         elif d["severity"] == "leftover":
                             st.info(
-                                "🟡 Một bên đã ghi nhận \"Đã khám\", dòng còn lại vẫn \"chưa khám\" — "
-                                "khả năng cao dòng \"chưa khám\" là dòng dư thừa, nên xoá để dọn."
+                                "🟡 Dòng tái khám đã ghi nhận \"Đã khám\", dòng Form vẫn \"chưa khám\" — "
+                                "xoá dòng Form (dư thừa) để dọn, không cần cập nhật gì thêm."
                             )
 
                         cA, cB = st.columns(2)
@@ -5287,9 +5299,13 @@ if st.session_state.metrics:
             selected_pairs = [
                 d for d in dup_pairs if st.session_state.get(f"dup_sel_{d['form']['sheet_row']}")
             ]
+            n_transfer = sum(1 for d in selected_pairs if d.get("needs_status_transfer"))
             st.markdown(
                 f'<div class="pg-info" style="text-align:left;margin:0.8rem 0">'
-                f'Đã chọn <b>{len(selected_pairs)}</b> / {len(dup_pairs)} dòng Form để xoá.</div>',
+                f'Đã chọn <b>{len(selected_pairs)}</b> / {len(dup_pairs)} dòng Form để xoá'
+                + (f' · trong đó <b>{n_transfer}</b> dòng sẽ tự chuyển trạng thái "Đã khám" '
+                   f'sang dòng tái khám trước khi xoá' if n_transfer else '')
+                + '.</div>',
                 unsafe_allow_html=True
             )
 
@@ -5310,7 +5326,8 @@ if st.session_state.metrics:
                     with st.expander(f"Xem lại {len(selected_pairs)} dòng sắp xoá"):
                         for d in selected_pairs:
                             pf2 = d["form"]
-                            st.write(f"STT {pf2.get('stt') or '—'} · {pf2['name']} · SĐT {pf2.get('phone') or '—'}")
+                            extra = " · 🔁 sẽ chuyển \"Đã khám\" sang dòng tái khám" if d.get("needs_status_transfer") else ""
+                            st.write(f"STT {pf2.get('stt') or '—'} · {pf2['name']} · SĐT {pf2.get('phone') or '—'}{extra}")
                     bc1, bc2 = st.columns(2)
                     with bc1:
                         if st.button("✅ Xác nhận xoá", key="dup_bulk_del_yes",
@@ -5318,22 +5335,45 @@ if st.session_state.metrics:
                             if not creds_data:
                                 st.error("❌ Chưa có credentials.")
                             else:
-                                n_del, err_del = delete_sheet_rows(
-                                    creds_data, SHEET_ID, SHEET_NAME,
-                                    [(d["form"]["sheet_row"], d["form"].get("stt") or None)
-                                     for d in selected_pairs]
-                                )
-                                if err_del:
-                                    st.error(f"❌ {err_del}")
+                                # 1) Trước tiên, chuyển "Đã khám" sang dòng tái khám cho
+                                # các cặp mà dòng Form (sắp xoá) đang giữ trạng thái đã
+                                # khám nhưng dòng tái khám thì chưa — làm TRƯỚC khi xoá
+                                # để không mất dấu lượt khám thực tế dù bước xoá có lỗi.
+                                transfer_rows = [
+                                    d for d in selected_pairs if d.get("needs_status_transfer")
+                                ]
+                                err_transfer = None
+                                if transfer_rows:
+                                    n_ok_t, err_transfer = update_patient_status_batch(
+                                        creds_data, SHEET_ID, SHEET_NAME,
+                                        [(d["khoa"]["sheet_row"], STATUS_ATTENDED,
+                                          d["khoa"].get("stt") or None, None)
+                                         for d in transfer_rows]
+                                    )
+                                if err_transfer:
+                                    st.error(f"❌ Lỗi khi chuyển trạng thái sang dòng tái khám: {err_transfer}")
                                 else:
-                                    st.success(f"✅ Đã xoá {n_del} dòng khỏi Google Sheet.")
-                                    for d in selected_pairs:
-                                        st.session_state.pop(f"dup_sel_{d['form']['sheet_row']}", None)
-                                    st.session_state.pop(bulk_confirm_key, None)
-                                    st.session_state.pop("dup_select_all_cb", None)
-                                    st.session_state.pop("dup_pairs", None)
-                                    st.session_state.metrics = None
-                                    st.rerun()
+                                    n_del, err_del = delete_sheet_rows(
+                                        creds_data, SHEET_ID, SHEET_NAME,
+                                        [(d["form"]["sheet_row"], d["form"].get("stt") or None)
+                                         for d in selected_pairs]
+                                    )
+                                    if err_del:
+                                        st.error(f"❌ {err_del}")
+                                    else:
+                                        st.success(
+                                            f"✅ Đã xoá {n_del} dòng khỏi Google Sheet"
+                                            + (f" · đã cập nhật {len(transfer_rows)} dòng tái khám thành \"Đã khám\""
+                                               if transfer_rows else "")
+                                            + "."
+                                        )
+                                        for d in selected_pairs:
+                                            st.session_state.pop(f"dup_sel_{d['form']['sheet_row']}", None)
+                                        st.session_state.pop(bulk_confirm_key, None)
+                                        st.session_state.pop("dup_select_all_cb", None)
+                                        st.session_state.pop("dup_pairs", None)
+                                        st.session_state.metrics = None
+                                        st.rerun()
                     with bc2:
                         if st.button("Huỷ", key="dup_bulk_del_no", use_container_width=True):
                             st.session_state.pop(bulk_confirm_key, None)
