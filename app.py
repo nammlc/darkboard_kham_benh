@@ -57,6 +57,21 @@ st.markdown("""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500;600&display=swap');
 
+/* Một số mạng/trình duyệt không tải được font icon nội bộ của Streamlit
+   (mũi tên mở expander, icon upload trong file_uploader, icon mắt trong
+   ô nhập mật khẩu, v.v.) — khi đó, thay vì hiện icon, trình duyệt hiện
+   THẲNG chữ text gốc của icon (vd "arrow_forward_ios", "upload_file") đè
+   lên chữ khác cạnh nó, gây rối chữ. Ẩn hẳn các icon font này đi (thà mất
+   icon trang trí còn hơn đè chữ khó đọc) — không ảnh hưởng đến chức năng,
+   chỉ mất phần hình minh hoạ nhỏ đi. */
+[data-testid="stIconMaterial"],
+span[class*="material-symbols"],
+span[class*="material-icons"] {
+    font-size: 0 !important;
+    line-height: 0 !important;
+    visibility: hidden !important;
+}
+
 *, html, body, [class*="css"] {
     font-family: 'Inter', sans-serif !important;
     box-sizing: border-box;
