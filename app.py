@@ -5227,6 +5227,13 @@ if st.session_state.metrics:
                 "normal": "⚪ Bình thường",
             }
 
+            def _dup_toggle_all():
+                new_val = st.session_state.get("dup_select_all_cb", False)
+                for d in st.session_state.get("dup_pairs", []):
+                    st.session_state[f"dup_sel_{d['form']['sheet_row']}"] = new_val
+
+            st.checkbox("☑️ Chọn tất cả", key="dup_select_all_cb", on_change=_dup_toggle_all)
+
             for d in sorted(dup_pairs, key=lambda x: (SEVERITY_RANK[x["severity"]], x["match_tier"])):
                 pk, pf = d["khoa"], d["form"]
                 tier_label = {1: "Tên + SĐT", 2: "Tên + Năm sinh", 3: "❓ Chỉ khớp tên"}[d["match_tier"]]
@@ -5269,49 +5276,70 @@ if st.session_state.metrics:
                         st.write(f"Nguồn hiện tại: {pf.get('source') or '(trống)'}")
                         st.write(f"Trạng thái: {'✅ Đã khám' if form_attended else '⏳ Chưa khám'}")
 
-                    # Xoá thẳng dòng Form nghi trùng — không cần bước "gắn
-                    # nhãn" riêng nữa. Vẫn giữ 1 lần xác nhận để tránh bấm
-                    # nhầm, vì đây là thao tác KHÔNG THỂ HOÀN TÁC.
-                    confirm_key = f"dup_del_confirm_{pf['sheet_row']}"
-                    if not st.session_state.get(confirm_key):
-                        if st.button(
-                            "🗑️ Trùng — Xoá Dòng Form Này",
-                            key=f"dup_del_btn_{pf['sheet_row']}", use_container_width=True, type="primary"
-                        ):
-                            st.session_state[confirm_key] = True
-                            st.rerun()
-                    else:
-                        st.error(
-                            f"⚠️ Xoá HẲN dòng STT {pf.get('stt') or '—'} ({pf['name']}) khỏi Google "
-                            f"Sheet — KHÔNG THỂ HOÀN TÁC. Chắc chắn chứ?"
-                        )
-                        dc1, dc2 = st.columns(2)
-                        with dc1:
-                            if st.button(
-                                "✅ Xác nhận xoá", key=f"dup_del_yes_{pf['sheet_row']}",
-                                type="primary", use_container_width=True
-                            ):
-                                if not creds_data:
-                                    st.error("❌ Chưa có credentials.")
+                    # Không xoá ngay tại đây nữa — chỉ TÍCH CHỌN. Xoá hàng
+                    # loạt các dòng đã tích ở 1 nút xác nhận DUY NHẤT bên dưới
+                    # danh sách (tránh bấm nhầm & tránh việc rerun sau mỗi lần
+                    # xoá làm mất luôn cả danh sách đang xem).
+                    st.checkbox(
+                        f"Chọn xoá dòng Form: STT {pf.get('stt') or '—'} · {pf['name']}",
+                        key=f"dup_sel_{pf['sheet_row']}"
+                    )
+
+            # ── Xoá hàng loạt các dòng ĐÃ TÍCH CHỌN ──────────────────
+            selected_pairs = [
+                d for d in dup_pairs if st.session_state.get(f"dup_sel_{d['form']['sheet_row']}")
+            ]
+            st.markdown(
+                f'<div class="pg-info" style="text-align:left;margin:0.8rem 0">'
+                f'Đã chọn <b>{len(selected_pairs)}</b> / {len(dup_pairs)} dòng Form để xoá.</div>',
+                unsafe_allow_html=True
+            )
+
+            bulk_confirm_key = "dup_bulk_del_confirm"
+            if selected_pairs:
+                if not st.session_state.get(bulk_confirm_key):
+                    if st.button(
+                        f"🗑️ Xoá {len(selected_pairs)} Dòng Form Đã Chọn",
+                        key="dup_bulk_del_btn", type="primary", use_container_width=True
+                    ):
+                        st.session_state[bulk_confirm_key] = True
+                        st.rerun()
+                else:
+                    st.error(
+                        f"⚠️ Xoá HẲN {len(selected_pairs)} dòng khỏi Google Sheet — "
+                        f"KHÔNG THỂ HOÀN TÁC. Chắc chắn chứ?"
+                    )
+                    with st.expander(f"Xem lại {len(selected_pairs)} dòng sắp xoá"):
+                        for d in selected_pairs:
+                            pf2 = d["form"]
+                            st.write(f"STT {pf2.get('stt') or '—'} · {pf2['name']} · SĐT {pf2.get('phone') or '—'}")
+                    bc1, bc2 = st.columns(2)
+                    with bc1:
+                        if st.button("✅ Xác nhận xoá", key="dup_bulk_del_yes",
+                                     type="primary", use_container_width=True):
+                            if not creds_data:
+                                st.error("❌ Chưa có credentials.")
+                            else:
+                                n_del, err_del = delete_sheet_rows(
+                                    creds_data, SHEET_ID, SHEET_NAME,
+                                    [(d["form"]["sheet_row"], d["form"].get("stt") or None)
+                                     for d in selected_pairs]
+                                )
+                                if err_del:
+                                    st.error(f"❌ {err_del}")
                                 else:
-                                    n_del, err_del = delete_sheet_rows(
-                                        creds_data, SHEET_ID, SHEET_NAME,
-                                        [(pf["sheet_row"], pf.get("stt") or None)]
-                                    )
-                                    if err_del:
-                                        st.error(f"❌ {err_del}")
-                                    else:
-                                        st.success("✅ Đã xoá dòng khỏi Google Sheet.")
-                                        st.session_state.pop(confirm_key, None)
-                                        st.session_state.pop("dup_pairs", None)
-                                        st.session_state.metrics = None
-                                        st.rerun()
-                        with dc2:
-                            if st.button(
-                                "Huỷ", key=f"dup_del_no_{pf['sheet_row']}", use_container_width=True
-                            ):
-                                st.session_state.pop(confirm_key, None)
-                                st.rerun()
+                                    st.success(f"✅ Đã xoá {n_del} dòng khỏi Google Sheet.")
+                                    for d in selected_pairs:
+                                        st.session_state.pop(f"dup_sel_{d['form']['sheet_row']}", None)
+                                    st.session_state.pop(bulk_confirm_key, None)
+                                    st.session_state.pop("dup_select_all_cb", None)
+                                    st.session_state.pop("dup_pairs", None)
+                                    st.session_state.metrics = None
+                                    st.rerun()
+                    with bc2:
+                        if st.button("Huỷ", key="dup_bulk_del_no", use_container_width=True):
+                            st.session_state.pop(bulk_confirm_key, None)
+                            st.rerun()
 
 
 
