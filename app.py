@@ -5243,47 +5243,45 @@ if st.session_state.metrics:
                     f"{'+' if d['day_diff'] and d['day_diff'] > 0 else ''}{d['day_diff']}"
                     if d["day_diff"] is not None else "—"
                 )
-                with st.expander(
-                    f"{sev_label[d['severity']]}  ·  {pk['name']}  ·  khớp {tier_label}  ·  "
-                    f"lệch ngày hẹn {day_diff_str}  ·  độ giống tên {d['score']:.0f}%"
-                ):
-                    if d["severity"] == "critical":
-                        st.error(
-                            "🔴 CẢ 2 dòng đều đang được tính là \"Đã khám\" — 1 lượt khám thực tế đang "
-                            "bị đếm thành 2 trong thống kê. Xoá dòng Form (dòng dư thừa) để số liệu đúng lại."
-                        )
-                    elif d["severity"] == "leftover":
-                        st.info(
-                            "🟡 Một bên đã ghi nhận \"Đã khám\", dòng còn lại vẫn \"chưa khám\" — "
-                            "khả năng cao dòng \"chưa khám\" là dòng dư thừa, nên xoá để dọn."
-                        )
-
-                    cA, cB = st.columns(2)
-                    with cA:
-                        st.markdown("**📋 Dòng tái khám (từ khoa) — sẽ GIỮ LẠI**")
-                        st.write(f"STT: {pk.get('stt') or '—'}")
-                        st.write(f"SĐT: {pk.get('phone') or '—'}")
-                        st.write(f"Năm sinh: {pk.get('birth_year') or '—'}")
-                        st.write(f"Ngày hẹn: {pk['exam_date'].strftime('%d/%m/%Y') if pk['exam_date'] else '—'}")
-                        st.write(f"Nguồn: {pk.get('source') or '—'}")
-                        st.write(f"Trạng thái: {'✅ Đã khám' if khoa_attended else '⏳ Chưa khám'}")
-                    with cB:
-                        st.markdown("**📝 Dòng đăng ký Form — NGHI TRÙNG**")
-                        st.write(f"STT: {pf.get('stt') or '—'}")
-                        st.write(f"SĐT: {pf.get('phone') or '—'}")
-                        st.write(f"Năm sinh: {pf.get('birth_year') or '—'}")
-                        st.write(f"Ngày hẹn: {pf['exam_date'].strftime('%d/%m/%Y') if pf['exam_date'] else '—'}")
-                        st.write(f"Nguồn hiện tại: {pf.get('source') or '(trống)'}")
-                        st.write(f"Trạng thái: {'✅ Đã khám' if form_attended else '⏳ Chưa khám'}")
-
-                    # Không xoá ngay tại đây nữa — chỉ TÍCH CHỌN. Xoá hàng
-                    # loạt các dòng đã tích ở 1 nút xác nhận DUY NHẤT bên dưới
-                    # danh sách (tránh bấm nhầm & tránh việc rerun sau mỗi lần
-                    # xoá làm mất luôn cả danh sách đang xem).
+                row_cb, row_body = st.columns([0.045, 0.955])
+                with row_cb:
                     st.checkbox(
-                        f"Chọn xoá dòng Form: STT {pf.get('stt') or '—'} · {pf['name']}",
-                        key=f"dup_sel_{pf['sheet_row']}"
+                        "Chọn", key=f"dup_sel_{pf['sheet_row']}", label_visibility="collapsed",
+                        help=f"Chọn xoá dòng Form: STT {pf.get('stt') or '—'} · {pf['name']}"
                     )
+                with row_body:
+                    with st.expander(
+                        f"{sev_label[d['severity']]}  ·  {pk['name']}  ·  khớp {tier_label}  ·  "
+                        f"lệch ngày hẹn {day_diff_str}  ·  độ giống tên {d['score']:.0f}%"
+                    ):
+                        if d["severity"] == "critical":
+                            st.error(
+                                "🔴 CẢ 2 dòng đều đang được tính là \"Đã khám\" — 1 lượt khám thực tế đang "
+                                "bị đếm thành 2 trong thống kê. Xoá dòng Form (dòng dư thừa) để số liệu đúng lại."
+                            )
+                        elif d["severity"] == "leftover":
+                            st.info(
+                                "🟡 Một bên đã ghi nhận \"Đã khám\", dòng còn lại vẫn \"chưa khám\" — "
+                                "khả năng cao dòng \"chưa khám\" là dòng dư thừa, nên xoá để dọn."
+                            )
+
+                        cA, cB = st.columns(2)
+                        with cA:
+                            st.markdown("**📋 Dòng tái khám (từ khoa) — sẽ GIỮ LẠI**")
+                            st.write(f"STT: {pk.get('stt') or '—'}")
+                            st.write(f"SĐT: {pk.get('phone') or '—'}")
+                            st.write(f"Năm sinh: {pk.get('birth_year') or '—'}")
+                            st.write(f"Ngày hẹn: {pk['exam_date'].strftime('%d/%m/%Y') if pk['exam_date'] else '—'}")
+                            st.write(f"Nguồn: {pk.get('source') or '—'}")
+                            st.write(f"Trạng thái: {'✅ Đã khám' if khoa_attended else '⏳ Chưa khám'}")
+                        with cB:
+                            st.markdown("**📝 Dòng đăng ký Form — NGHI TRÙNG**")
+                            st.write(f"STT: {pf.get('stt') or '—'}")
+                            st.write(f"SĐT: {pf.get('phone') or '—'}")
+                            st.write(f"Năm sinh: {pf.get('birth_year') or '—'}")
+                            st.write(f"Ngày hẹn: {pf['exam_date'].strftime('%d/%m/%Y') if pf['exam_date'] else '—'}")
+                            st.write(f"Nguồn hiện tại: {pf.get('source') or '(trống)'}")
+                            st.write(f"Trạng thái: {'✅ Đã khám' if form_attended else '⏳ Chưa khám'}")
 
             # ── Xoá hàng loạt các dòng ĐÃ TÍCH CHỌN ──────────────────
             selected_pairs = [
