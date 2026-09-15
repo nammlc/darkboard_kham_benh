@@ -5256,10 +5256,25 @@ if st.session_state.metrics:
                         help=f"Chọn xoá dòng Form: STT {pf.get('stt') or '—'} · {pf['name']}"
                     )
                 with row_body:
-                    with st.expander(
+                    # KHÔNG dùng st.expander ở đây nữa — icon mũi tên có sẵn của
+                    # Streamlit bị lỗi font trên một số trình duyệt/mạng, hiện ra
+                    # chữ "arr..." đè lên chữ đầu dòng. Tự làm nút ẩn/hiện bằng
+                    # st.button (chỉ dùng ký tự emoji thường ▶️/🔽, không dùng
+                    # icon font) để tránh hẳn lỗi này.
+                    detail_key = f"dup_show_{pf['sheet_row']}"
+                    if detail_key not in st.session_state:
+                        st.session_state[detail_key] = False
+                    row_label = (
                         f"{sev_label[d['severity']]}  ·  {pk['name']}  ·  khớp {tier_label}  ·  "
                         f"lệch ngày hẹn {day_diff_str}  ·  độ giống tên {d['score']:.0f}%"
-                    ):
+                    )
+                    toggle_icon = "🔽" if st.session_state[detail_key] else "▶️"
+                    if st.button(f"{toggle_icon}  {row_label}", key=f"dup_toggle_{pf['sheet_row']}",
+                                 use_container_width=True):
+                        st.session_state[detail_key] = not st.session_state[detail_key]
+                        st.rerun()
+
+                    if st.session_state[detail_key]:
                         if d["severity"] == "critical":
                             st.error(
                                 "🔴 CẢ 2 dòng đều đang được tính là \"Đã khám\" — 1 lượt khám thực tế đang "
@@ -5294,6 +5309,7 @@ if st.session_state.metrics:
                             st.write(f"Ngày hẹn: {pf['exam_date'].strftime('%d/%m/%Y') if pf['exam_date'] else '—'}")
                             st.write(f"Nguồn hiện tại: {pf.get('source') or '(trống)'}")
                             st.write(f"Trạng thái: {'✅ Đã khám' if form_attended else '⏳ Chưa khám'}")
+                        st.markdown('<div style="height:0.4rem"></div>', unsafe_allow_html=True)
 
             # ── Xoá hàng loạt các dòng ĐÃ TÍCH CHỌN ──────────────────
             selected_pairs = [
