@@ -326,23 +326,56 @@ button[data-testid="baseButton-headerNoPadding"] { display:none !important; }
 .rn-cell { font-family:'JetBrains Mono',monospace; font-weight:600; text-align:center;
            padding:0.15rem 0.3rem; font-size:0.85rem; color:#0f172a; }
 .rn-ky { font-family:'Inter',sans-serif; font-weight:600; text-align:left; color:#1e293b; }
-.rn-hdr { font-size:0.66rem; font-weight:700; text-align:center; color:#fff; padding:0.4rem 0.2rem;
-          border-radius:6px; }
+.rn-hdr { font-size:0.66rem; font-weight:700; text-align:center; color:#fff;
+          padding:0.4rem 0.3rem; border-radius:6px;
+          white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 
-/* Bảng Chi Tiết Báo Cáo giờ dựng bằng st.columns (để nút số bấm được),
-   nhưng Streamlit mặc định XẾP DỌC các cột trên màn hình hẹp (mobile) —
-   ép nó LUÔN nằm ngang + cuộn ngang, giống bảng HTML cũ, để không vỡ
-   giao diện trên điện thoại. */
-[class*="st-key-rptrow_"] div[data-testid="stHorizontalBlock"] {
-    flex-wrap: nowrap !important; overflow-x: auto !important;
-    gap: 0.25rem !important; align-items: center !important;
+/* ── Bảng Chi Tiết Báo Cáo ──
+   Dùng st.columns() để giữ nút bấm số hoạt động được.
+   Streamlit các phiên bản mới thay đổi data-testid → selector kép để
+   tương thích cả cũ lẫn mới; fallback thêm selector "con đầu tiên"
+   phòng trường hợp testid đổi tiếp. */
+
+/* Hàng trong bảng: luôn nằm ngang, cuộn khi tràn */
+[class*="st-key-rptrow_"] > div > div[data-testid="stHorizontalBlock"],
+[class*="st-key-rptrow_"] > div > div[data-testid="stColumns"],
+[class*="st-key-rptrow_"] > div > [class*="stHorizontalBlock"],
+[class*="st-key-rptrow_"] > div > [class*="stColumns"] {
+    display: flex !important;
+    flex-wrap: nowrap !important;
+    overflow-x: auto !important;
+    overflow-y: visible !important;
+    gap: 0.25rem !important;
+    align-items: center !important;
+    scrollbar-width: none !important;       /* Firefox */
+    -ms-overflow-style: none !important;    /* IE/Edge */
 }
-[class*="st-key-rptrow_"] div[data-testid="stColumn"] {
-    min-width: 58px !important; flex: 0 0 auto !important; width: auto !important;
+[class*="st-key-rptrow_"] > div > div[data-testid="stHorizontalBlock"]::-webkit-scrollbar,
+[class*="st-key-rptrow_"] > div > div[data-testid="stColumns"]::-webkit-scrollbar {
+    display: none !important;   /* Chrome/Safari: ẩn scrollbar nhưng vẫn cuộn được */
 }
-[class*="st-key-rptrow_hdr"] { position: sticky; top: 0; z-index: 2; background: white; }
+
+/* Mỗi ô cột trong hàng: không co, không giãn tuỳ tiện */
+[class*="st-key-rptrow_"] > div > div[data-testid="stHorizontalBlock"] > div[data-testid="stColumn"],
+[class*="st-key-rptrow_"] > div > div[data-testid="stColumns"] > div[data-testid="stColumn"],
+[class*="st-key-rptrow_"] > div > div[data-testid="stHorizontalBlock"] > div[data-testid="column"],
+[class*="st-key-rptrow_"] > div > div[data-testid="stColumns"] > div[data-testid="column"] {
+    min-width: 62px !important;
+    flex: 0 0 auto !important;
+    width: auto !important;
+    padding: 0 !important;
+}
+
+/* Header dính trên đầu khi cuộn dọc */
+[class*="st-key-rptrow_hdr"] {
+    position: sticky !important; top: 0 !important;
+    z-index: 3 !important; background: white !important;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.06) !important;
+}
+
+/* Kẻ dòng cho mỗi hàng dữ liệu */
 [class*="st-key-rptrow_"]:not([class*="rptrow_hdr"]) {
-    border-bottom: 1px solid #f1f5f9; padding: 0.15rem 0;
+    border-bottom: 1px solid #f1f5f9 !important; padding: 0.1rem 0 !important;
 }
 
 /* ── EMPTY STATE ── */
@@ -4696,7 +4729,8 @@ if st.session_state.metrics:
             st.markdown(f'<div class="sh"><div class="sh-dot" style="background:{p_col}"></div><span class="sh-txt">Bảng Chi Tiết Theo {sel_p}</span></div>', unsafe_allow_html=True)
             st.caption("💡 Bấm vào 1 con số để xem pop-up danh sách bệnh nhân tương ứng.")
 
-            RPT_COL_RATIOS = [1.7, 0.6, 0.68, 0.68, 0.68, 0.68, 0.72, 0.72, 0.58, 0.58]
+            # ── Tỉ lệ cột: cột Kỳ rộng hơn, các cột số bằng nhau ──
+            RPT_COL_RATIOS = [2.0, 0.7, 0.72, 0.72, 0.72, 0.72, 0.75, 0.75, 0.65, 0.65]
             RPT_HEADERS    = ["Kỳ", "Tổng", "Đến·TK", "Đến·VL", "Vắng·TK", "Vắng·VL",
                                "T.Đến", "T.Vắng", "%Đến", "%Vắng"]
             RPT_HDR_BG     = ["#1e3a5f", "#1e3a5f", "#1e5c3a", "#1e5c3a", "#8a2a2a", "#8a2a2a",
@@ -4712,18 +4746,28 @@ if st.session_state.metrics:
                         elif st.button(str(val), key=ckey + "_b", use_container_width=True):
                             _rpt_drill_dialog(df, sel_p, ky, kind)
 
-            with st.container(key="rptrow_hdr"):
-                hdr_cols = st.columns(RPT_COL_RATIOS)
-                for hc, lbl, bg in zip(hdr_cols, RPT_HEADERS, RPT_HDR_BG):
-                    with hc:
-                        st.markdown(f'<div class="rn-hdr" style="background:{bg}">{lbl}</div>', unsafe_allow_html=True)
-
+            # Phân trang đặt TRÊN header (không kẹp giữa header và dữ liệu)
             stats_records = stats.to_dict("records")
             page_stats, cur_s, total_s, st_s, en_s, tot_s = paginate_list(
                 stats_records, "pg_rpt_table", page_size=10
             )
             render_pagination_bar("pg_rpt_table", cur_s, total_s, st_s, en_s, tot_s,
                                    label=sel_p.lower(), widget_key="pg_rpt_table_top")
+
+            # ── Bọc toàn bộ bảng trong div cuộn ngang ──
+            # (dự phòng thêm cho trường hợp CSS st.columns chưa đủ)
+            st.markdown(
+                '<div class="rpt-table-wrap" style="overflow-x:auto;-webkit-overflow-scrolling:touch;'
+                'border:1px solid #e2e8f0;border-radius:10px;padding:0.2rem 0.4rem;">',
+                unsafe_allow_html=True
+            )
+
+            with st.container(key="rptrow_hdr"):
+                hdr_cols = st.columns(RPT_COL_RATIOS)
+                for hc, lbl, bg in zip(hdr_cols, RPT_HEADERS, RPT_HDR_BG):
+                    with hc:
+                        st.markdown(f'<div class="rn-hdr" style="background:{bg}">{lbl}</div>',
+                                    unsafe_allow_html=True)
 
             for row in page_stats:
                 ky = row["Kỳ"]
@@ -4742,9 +4786,13 @@ if st.session_state.metrics:
                     _rpt_num_cell(rc[6], row["Đã khám"], "td", ky, "td")
                     _rpt_num_cell(rc[7], row["Vắng / Chưa"], "tv", ky, "tv")
                     with rc[8]:
-                        st.markdown(f'<div class="rn-cell {g_cls}">{row["Tỷ lệ đến (%)"]}%</div>', unsafe_allow_html=True)
+                        st.markdown(f'<div class="rn-cell {g_cls}">{row["Tỷ lệ đến (%)"]}%</div>',
+                                    unsafe_allow_html=True)
                     with rc[9]:
-                        st.markdown(f'<div class="rn-cell {r_cls}">{row["Tỷ lệ vắng (%)"]}%</div>', unsafe_allow_html=True)
+                        st.markdown(f'<div class="rn-cell {r_cls}">{row["Tỷ lệ vắng (%)"]}%</div>',
+                                    unsafe_allow_html=True)
+
+            st.markdown('</div>', unsafe_allow_html=True)   # đóng rpt-table-wrap
 
             render_pagination_bar("pg_rpt_table", cur_s, total_s, st_s, en_s, tot_s,
                                    label=sel_p.lower(), widget_key="pg_rpt_table_bottom")
