@@ -305,78 +305,46 @@ button[data-testid="baseButton-headerNoPadding"] { display:none !important; }
 .pct-g { color:#059669; font-weight:700; }
 .pct-r { color:#dc2626; font-weight:700; }
 
-/* Ô số bấm được trong "Bảng Chi Tiết Báo Cáo" — hiện như số bình thường
-   (không gạch chân, không viền/nền nút mặc định), chỉ đổi con trỏ thành
-   pointer và tô nhẹ khi hover để biết là bấm được. */
-[class*="st-key-rptnum_"] div[data-testid="stButton"] button {
-    background: transparent !important; border: none !important;
-    box-shadow: none !important; padding: 0.15rem 0.3rem !important;
-    margin: 0 auto !important; min-height: unset !important; height: auto !important;
-    font-family: 'JetBrains Mono', monospace !important; font-weight: 700 !important;
-    font-size: 0.85rem !important; color: inherit !important; cursor: pointer !important;
-    border-radius: 6px !important; line-height: 1.3 !important;
+/* ── Bảng Chi Tiết Báo Cáo (HTML <table> thuần) ── */
+.rpt-wrap {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    border: 1px solid #e2e8f0;
+    border-radius: 10px;
+    margin: 0.5rem 0 1rem;
 }
-[class*="st-key-rptnum_"] div[data-testid="stButton"] button:hover {
-    background: rgba(59,130,246,0.16) !important;
+.rpt-wrap table {
+    width: 100%; border-collapse: collapse;
+    min-width: 640px;   /* đảm bảo có scrollbar ngang trên mobile */
+    font-size: 0.83rem;
 }
-[class*="st-key-rptnum_att_"] div[data-testid="stButton"] button { color: #065f46 !important; }
-[class*="st-key-rptnum_abs_"] div[data-testid="stButton"] button { color: #991b1b !important; }
-[class*="st-key-rptnum_td_"] div[data-testid="stButton"] button  { color: #059669 !important; }
-[class*="st-key-rptnum_tv_"] div[data-testid="stButton"] button  { color: #dc2626 !important; }
-.rn-cell { font-family:'JetBrains Mono',monospace; font-weight:600; text-align:center;
-           padding:0.15rem 0.3rem; font-size:0.85rem; color:#0f172a; }
-.rn-ky { font-family:'Inter',sans-serif; font-weight:600; text-align:left; color:#1e293b; }
-.rn-hdr { font-size:0.66rem; font-weight:700; text-align:center; color:#fff;
-          padding:0.4rem 0.3rem; border-radius:6px;
-          white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-
-/* ── Bảng Chi Tiết Báo Cáo ──
-   Dùng st.columns() để giữ nút bấm số hoạt động được.
-   Streamlit các phiên bản mới thay đổi data-testid → selector kép để
-   tương thích cả cũ lẫn mới; fallback thêm selector "con đầu tiên"
-   phòng trường hợp testid đổi tiếp. */
-
-/* Hàng trong bảng: luôn nằm ngang, cuộn khi tràn */
-[class*="st-key-rptrow_"] > div > div[data-testid="stHorizontalBlock"],
-[class*="st-key-rptrow_"] > div > div[data-testid="stColumns"],
-[class*="st-key-rptrow_"] > div > [class*="stHorizontalBlock"],
-[class*="st-key-rptrow_"] > div > [class*="stColumns"] {
-    display: flex !important;
-    flex-wrap: nowrap !important;
-    overflow-x: auto !important;
-    overflow-y: visible !important;
-    gap: 0.25rem !important;
-    align-items: center !important;
-    scrollbar-width: none !important;       /* Firefox */
-    -ms-overflow-style: none !important;    /* IE/Edge */
+.rpt-wrap thead th {
+    padding: 0.45rem 0.55rem;
+    color: #fff; font-weight: 700; font-size: 0.7rem;
+    text-align: center; white-space: nowrap;
+    position: sticky; top: 0; z-index: 2;
 }
-[class*="st-key-rptrow_"] > div > div[data-testid="stHorizontalBlock"]::-webkit-scrollbar,
-[class*="st-key-rptrow_"] > div > div[data-testid="stColumns"]::-webkit-scrollbar {
-    display: none !important;   /* Chrome/Safari: ẩn scrollbar nhưng vẫn cuộn được */
+.rpt-wrap thead th:first-child { text-align: left; border-radius: 10px 0 0 0; }
+.rpt-wrap thead th:last-child  { border-radius: 0 10px 0 0; }
+.rpt-wrap tbody tr { border-bottom: 1px solid #f1f5f9; }
+.rpt-wrap tbody tr:last-child { border-bottom: none; }
+.rpt-wrap tbody tr:hover { background: #f8fafc; }
+.rpt-wrap tbody td {
+    padding: 0.4rem 0.55rem;
+    text-align: center;
+    font-family: 'JetBrains Mono', monospace;
+    font-weight: 600; color: #0f172a; white-space: nowrap;
 }
-
-/* Mỗi ô cột trong hàng: không co, không giãn tuỳ tiện */
-[class*="st-key-rptrow_"] > div > div[data-testid="stHorizontalBlock"] > div[data-testid="stColumn"],
-[class*="st-key-rptrow_"] > div > div[data-testid="stColumns"] > div[data-testid="stColumn"],
-[class*="st-key-rptrow_"] > div > div[data-testid="stHorizontalBlock"] > div[data-testid="column"],
-[class*="st-key-rptrow_"] > div > div[data-testid="stColumns"] > div[data-testid="column"] {
-    min-width: 62px !important;
-    flex: 0 0 auto !important;
-    width: auto !important;
-    padding: 0 !important;
+.rpt-wrap tbody td:first-child {
+    font-family: 'Inter', sans-serif; font-weight: 600;
+    color: #1e293b; text-align: left;
 }
-
-/* Header dính trên đầu khi cuộn dọc */
-[class*="st-key-rptrow_hdr"] {
-    position: sticky !important; top: 0 !important;
-    z-index: 3 !important; background: white !important;
-    box-shadow: 0 2px 6px rgba(0,0,0,0.06) !important;
-}
-
-/* Kẻ dòng cho mỗi hàng dữ liệu */
-[class*="st-key-rptrow_"]:not([class*="rptrow_hdr"]) {
-    border-bottom: 1px solid #f1f5f9 !important; padding: 0.1rem 0 !important;
-}
+.rpt-wrap .c-att  { color: #065f46; }
+.rpt-wrap .c-abs  { color: #991b1b; }
+.rpt-wrap .c-tot  { color: #059669; font-weight: 800; }
+.rpt-wrap .c-vng  { color: #dc2626; font-weight: 800; }
+.rpt-wrap .c-pg   { color: #059669; font-weight: 700; }
+.rpt-wrap .c-pr   { color: #dc2626; font-weight: 700; }
 
 /* ── EMPTY STATE ── */
 .empty {
@@ -4729,24 +4697,12 @@ if st.session_state.metrics:
             st.markdown(f'<div class="sh"><div class="sh-dot" style="background:{p_col}"></div><span class="sh-txt">Bảng Chi Tiết Theo {sel_p}</span></div>', unsafe_allow_html=True)
             st.caption("💡 Bấm vào 1 con số để xem pop-up danh sách bệnh nhân tương ứng.")
 
-            # ── Tỉ lệ cột: cột Kỳ rộng hơn, các cột số bằng nhau ──
-            RPT_COL_RATIOS = [2.0, 0.7, 0.72, 0.72, 0.72, 0.72, 0.75, 0.75, 0.65, 0.65]
-            RPT_HEADERS    = ["Kỳ", "Tổng", "Đến·TK", "Đến·VL", "Vắng·TK", "Vắng·VL",
-                               "T.Đến", "T.Vắng", "%Đến", "%Vắng"]
-            RPT_HDR_BG     = ["#1e3a5f", "#1e3a5f", "#1e5c3a", "#1e5c3a", "#8a2a2a", "#8a2a2a",
-                               "#14532d", "#7f1d1d", "#1e3a5f", "#1e3a5f"]
+            RPT_HEADERS = ["Kỳ", "Tổng ĐK", "Đến·TK", "Đến·VL",
+                           "Vắng·TK", "Vắng·VL", "T.Đến", "T.Vắng", "%Đến", "%Vắng"]
+            RPT_HDR_BG  = ["#1e3a5f","#1e3a5f","#1e5c3a","#1e5c3a",
+                           "#8a2a2a","#8a2a2a","#14532d","#7f1d1d","#1e3a5f","#1e3a5f"]
 
-            def _rpt_num_cell(col, val, kind, ky, group):
-                val = int(val)
-                with col:
-                    ckey = f"rptnum_{group}_{_safe_key(ky)}_{kind}"
-                    with st.container(key=ckey):
-                        if val <= 0:
-                            st.markdown('<div class="rn-cell">0</div>', unsafe_allow_html=True)
-                        elif st.button(str(val), key=ckey + "_b", use_container_width=True):
-                            _rpt_drill_dialog(df, sel_p, ky, kind)
-
-            # Phân trang đặt TRÊN header (không kẹp giữa header và dữ liệu)
+            # ── Phân trang ──
             stats_records = stats.to_dict("records")
             page_stats, cur_s, total_s, st_s, en_s, tot_s = paginate_list(
                 stats_records, "pg_rpt_table", page_size=10
@@ -4754,49 +4710,74 @@ if st.session_state.metrics:
             render_pagination_bar("pg_rpt_table", cur_s, total_s, st_s, en_s, tot_s,
                                    label=sel_p.lower(), widget_key="pg_rpt_table_top")
 
-            # ── Bọc toàn bộ bảng trong div cuộn ngang ──
-            # (dự phòng thêm cho trường hợp CSS st.columns chưa đủ)
-            st.markdown(
-                '<div class="rpt-table-wrap" style="overflow-x:auto;-webkit-overflow-scrolling:touch;'
-                'border:1px solid #e2e8f0;border-radius:10px;padding:0.2rem 0.4rem;">',
-                unsafe_allow_html=True
+            # ── Dựng HTML <table> thuần — không dùng st.columns() để tránh vỡ layout ──
+            def _nc(val, css_cls):
+                """Ô số: 0 xám, khác màu theo loại."""
+                v = int(val)
+                if v == 0:
+                    return f'<td style="color:#94a3b8">{v}</td>'
+                return f'<td class="{css_cls}">{v}</td>'
+
+            hdr_cells = "".join(
+                f'<th style="background:{bg}">{lbl}</th>'
+                for lbl, bg in zip(RPT_HEADERS, RPT_HDR_BG)
             )
 
-            with st.container(key="rptrow_hdr"):
-                hdr_cols = st.columns(RPT_COL_RATIOS)
-                for hc, lbl, bg in zip(hdr_cols, RPT_HEADERS, RPT_HDR_BG):
-                    with hc:
-                        st.markdown(f'<div class="rn-hdr" style="background:{bg}">{lbl}</div>',
-                                    unsafe_allow_html=True)
-
+            body_rows = ""
             for row in page_stats:
                 ky = row["Kỳ"]
-                g_cls = "pct-g" if row["Tỷ lệ đến (%)"] >= 50 else "pct-r"
-                r_cls = "pct-r" if row["Tỷ lệ vắng (%)"] >= 50 else "pct-g"
-                with st.container(key=f"rptrow_{_safe_key(ky)}"):
-                    rc = st.columns(RPT_COL_RATIOS)
-                    with rc[0]:
-                        st.markdown(f'<div class="rn-cell rn-ky">{ky}</div>', unsafe_allow_html=True)
-                    with rc[1]:
-                        st.markdown(f'<div class="rn-cell">{int(row["Đăng ký"])}</div>', unsafe_allow_html=True)
-                    _rpt_num_cell(rc[2], row["Đến - Tái Khám"], "dt", ky, "att")
-                    _rpt_num_cell(rc[3], row["Đến - Vãng Lai"], "dv", ky, "att")
-                    _rpt_num_cell(rc[4], row["Vắng - Tái Khám"], "vt", ky, "abs")
-                    _rpt_num_cell(rc[5], row["Vắng - Vãng Lai"], "vv", ky, "abs")
-                    _rpt_num_cell(rc[6], row["Đã khám"], "td", ky, "td")
-                    _rpt_num_cell(rc[7], row["Vắng / Chưa"], "tv", ky, "tv")
-                    with rc[8]:
-                        st.markdown(f'<div class="rn-cell {g_cls}">{row["Tỷ lệ đến (%)"]}%</div>',
-                                    unsafe_allow_html=True)
-                    with rc[9]:
-                        st.markdown(f'<div class="rn-cell {r_cls}">{row["Tỷ lệ vắng (%)"]}%</div>',
-                                    unsafe_allow_html=True)
+                g_cls = "c-pg" if row["Tỷ lệ đến (%)"] >= 50 else "c-pr"
+                r_cls = "c-pr" if row["Tỷ lệ vắng (%)"] >= 50 else "c-pg"
+                body_rows += f"""<tr>
+                  <td style="font-family:Inter,sans-serif;font-weight:600;color:#1e293b;text-align:left">{ky}</td>
+                  <td>{int(row['Đăng ký'])}</td>
+                  {_nc(row['Đến - Tái Khám'],  'c-att')}
+                  {_nc(row['Đến - Vãng Lai'],  'c-att')}
+                  {_nc(row['Vắng - Tái Khám'], 'c-abs')}
+                  {_nc(row['Vắng - Vãng Lai'], 'c-abs')}
+                  {_nc(row['Đã khám'],         'c-tot')}
+                  {_nc(row['Vắng / Chưa'],     'c-vng')}
+                  <td class="{g_cls}">{row['Tỷ lệ đến (%)']:.1f}%</td>
+                  <td class="{r_cls}">{row['Tỷ lệ vắng (%)']:.1f}%</td>
+                </tr>"""
 
-            st.markdown('</div>', unsafe_allow_html=True)   # đóng rpt-table-wrap
+            st.markdown(f"""
+            <div class="rpt-wrap">
+              <table>
+                <thead><tr>{hdr_cells}</tr></thead>
+                <tbody>{body_rows}</tbody>
+              </table>
+            </div>
+            """, unsafe_allow_html=True)
 
             render_pagination_bar("pg_rpt_table", cur_s, total_s, st_s, en_s, tot_s,
                                    label=sel_p.lower(), widget_key="pg_rpt_table_bottom")
-            st.markdown('<div class="scroll-hint">← Vuốt ngang để xem thêm →</div>', unsafe_allow_html=True)
+
+            # ── Drill-down: chọn kỳ + loại rồi xem pop-up ──
+            st.markdown('<div class="sh"><div class="sh-dot" style="background:#64748b"></div>'
+                        '<span class="sh-txt">Xem Chi Tiết Bệnh Nhân Theo Kỳ</span></div>',
+                        unsafe_allow_html=True)
+            _d1, _d2, _d3 = st.columns([2, 2, 1])
+            with _d1:
+                _drill_ky = st.selectbox(
+                    "Chọn kỳ", [r["Kỳ"] for r in stats_records],
+                    key="rpt_drill_ky", label_visibility="collapsed"
+                )
+            with _d2:
+                _drill_type = st.selectbox(
+                    "Loại", ["Tổng đã đến khám", "Tổng vắng / chưa khám",
+                              "Đến – Tái Khám", "Đến – Vãng Lai",
+                              "Vắng – Tái Khám", "Vắng – Vãng Lai"],
+                    key="rpt_drill_type", label_visibility="collapsed"
+                )
+            with _d3:
+                if st.button("🔍 Xem", key="rpt_drill_btn", use_container_width=True):
+                    _kind_map = {
+                        "Tổng đã đến khám": "td", "Tổng vắng / chưa khám": "tv",
+                        "Đến – Tái Khám": "dt", "Đến – Vãng Lai": "dv",
+                        "Vắng – Tái Khám": "vt", "Vắng – Vãng Lai": "vv",
+                    }
+                    _rpt_drill_dialog(df, sel_p, _drill_ky, _kind_map[_drill_type])
 
             st.markdown("<br>", unsafe_allow_html=True)
             csv_r = stats.to_csv(index=False, encoding="utf-8-sig")
