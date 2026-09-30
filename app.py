@@ -9,6 +9,7 @@ import plotly.graph_objects as go
 import gspread
 from google.oauth2.service_account import Credentials
 import json, os, re
+from urllib.parse import quote as _urlq
 import openpyxl
 from datetime import datetime, timedelta, date
 from collections import Counter
@@ -304,6 +305,12 @@ button[data-testid="baseButton-headerNoPadding"] { display:none !important; }
 .rtbl .num { font-family:'JetBrains Mono',monospace; font-weight:600; color:#0f172a; }
 .pct-g { color:#059669; font-weight:700; }
 .pct-r { color:#dc2626; font-weight:700; }
+.rtbl-link {
+    color: inherit; font: inherit; text-decoration: none;
+    cursor: pointer !important; border-bottom: 1px dashed currentColor;
+    padding: 0.1rem 0.3rem; border-radius: 4px;
+}
+.rtbl-link:hover { background: rgba(59,130,246,0.14); border-bottom-style: solid; }
 
 /* ── EMPTY STATE ── */
 .empty {
@@ -2377,8 +2384,13 @@ def today_stats(df, today_date):
     att   = int((d[COL_STATUS].str.upper()==STATUS_ATTENDED.upper()).sum()) if total>0 else 0
     return total, att, total-att, d
 
-def build_stats(df, period):
-    if "_date" not in df.columns or not df["_date"].notna().any(): return None
+def _period_tag_df(df, period):
+    """Gắn nhãn KỲ (theo period: Ngày/Tuần/Tháng/Quý/Năm) và các cờ
+    _att (đã khám) / _tk (tái khám) / _vl (vãng lai) vào TỪNG DÒNG bệnh
+    nhân. Dùng chung cho build_stats() (tổng hợp số liệu) VÀ cho phần
+    "bấm số xem danh sách" (lọc đúng những dòng khớp 1 ô trong bảng)."""
+    if "_date" not in df.columns or not df["_date"].notna().any():
+        return None
     d = df[df["_date"].notna()].copy()
     if period=="Ngày":       d["Kỳ"] = d["_date"].dt.strftime("%d/%m/%Y")
     elif period=="Tuần":
@@ -2397,6 +2409,33 @@ def build_stats(df, period):
     else:
         d["_tk"] = False
         d["_vl"] = False
+    return d
+
+
+RPT_KIND_LABELS = {
+    "dt": "✅ Đến Khám · 🏥 Tái Khám",
+    "dv": "✅ Đến Khám · 🚶 Vãng Lai",
+    "vt": "⏳ Vắng · 🏥 Tái Khám",
+    "vv": "⏳ Vắng · 🚶 Vãng Lai",
+    "td": "✅ Tổng Đến Khám",
+    "tv": "⏳ Tổng Vắng / Chưa Khám",
+}
+
+
+def _rpt_drilldown_mask(d, kind):
+    if kind == "dt": return d["_att"] & d["_tk"]
+    if kind == "dv": return d["_att"] & d["_vl"]
+    if kind == "vt": return d["_tk"] & ~d["_att"]
+    if kind == "vv": return d["_vl"] & ~d["_att"]
+    if kind == "td": return d["_att"]
+    if kind == "tv": return ~d["_att"]
+    return pd.Series(False, index=d.index)
+
+
+def build_stats(df, period):
+    d = _period_tag_df(df, period)
+    if d is None:
+        return None
 
     grp   = d.groupby("Kỳ", sort=False)
     stats = grp.size().reset_index(name="Đăng ký")
@@ -3462,6 +3501,74 @@ if st.session_state.metrics:
       </div>
     </div>
     """, unsafe_allow_html=True)
+
+    # ── BẢNG CHI TIẾT BÁO CÁO: DANH SÁCH BỆNH NHÂN KHI BẤM VÀO 1 CON SỐ ──
+    # Đặt Ở ĐÂY (ngoài mọi tab) vì link <a href="?..."> load lại cả trang,
+    # Streamlit sẽ quay về tab đầu tiên — đặt khối này TRƯỚC danh sách tab
+    # để dù đang ở tab nào, bấm số xong vẫn thấy ngay kết quả, không cần
+    # bấm lại vào tab "📈 Báo Cáo".
+    _rpt_p = st.query_params.get("rpt_p")
+    _rpt_k = st.query_params.get("rpt_k")
+    _rpt_c = st.query_params.get("rpt_c")
+    if _rpt_p and _rpt_k and _rpt_c in RPT_KIND_LABELS:
+        st.markdown('<div id="rpt-drill"></div>', unsafe_allow_html=True)
+        d_rpt = _period_tag_df(df, _rpt_p)
+        if d_rpt is None:
+            st.warning("Không dựng được danh sách — thiếu dữ liệu ngày khám.")
+        else:
+            d_ky = d_rpt[d_rpt["Kỳ"] == _rpt_k]
+            drill_rows = d_ky[_rpt_drilldown_mask(d_ky, _rpt_c)]
+            with st.container(border=True):
+                hc1, hc2 = st.columns([0.85, 0.15])
+                with hc1:
+                    st.markdown(
+                        f"#### 🔍 {RPT_KIND_LABELS[_rpt_c]} — Kỳ **{_rpt_k}** ({_rpt_p})\n"
+                        f"Tìm thấy **{len(drill_rows)}** bệnh nhân."
+                    )
+                with hc2:
+                    if st.button("✕ Đóng", key="rpt_drill_close", use_container_width=True):
+                        st.query_params.clear()
+                        st.rerun()
+
+                drill_items = [
+                    {
+                        "stt": r.get(COL_STT, "") if COL_STT in d_ky.columns else "",
+                        "name": r.get(COL_NAME, ""),
+                        "phone": r.get(COL_PHONE, ""),
+                        "exam_date": r["_date"].strftime("%d/%m/%Y") if pd.notna(r.get("_date")) else "—",
+                        "source": r.get(COL_SOURCE, "") or "—",
+                        "attended": bool(r.get("_att")),
+                    }
+                    for _, r in drill_rows.iterrows()
+                ]
+                page_items, cur_p, total_p, st_i, en_i, tot_i = paginate_list(
+                    drill_items, "pg_rpt_drill", page_size=15
+                )
+                if not drill_items:
+                    st.info("Không có bệnh nhân nào khớp mục này.")
+                else:
+                    render_pagination_bar("pg_rpt_drill", cur_p, total_p, st_i, en_i, tot_i,
+                                           widget_key="pg_rpt_drill_top")
+                    tbl_rows = "".join(
+                        f"""<tr>
+                          <td>{it['stt'] or '—'}</td>
+                          <td>{it['name']}</td>
+                          <td class="num">{it['phone'] or '—'}</td>
+                          <td class="num">{it['exam_date']}</td>
+                          <td>{it['source']}</td>
+                          <td>{'✅ Đã khám' if it['attended'] else '⏳ Chưa khám'}</td>
+                        </tr>"""
+                        for it in page_items
+                    )
+                    st.markdown(f"""
+                    <div class="rtbl-wrap">
+                      <table class="rtbl"><thead><tr>
+                        <th>STT</th><th>Họ tên</th><th>SĐT</th><th>Ngày khám</th><th>Nguồn</th><th>Trạng thái</th>
+                      </tr></thead><tbody>{tbl_rows}</tbody></table>
+                    </div>
+                    """, unsafe_allow_html=True)
+                    render_pagination_bar("pg_rpt_drill", cur_p, total_p, st_i, en_i, tot_i,
+                                           widget_key="pg_rpt_drill_bottom")
 
     # ── TABS ────────────────────────────────────
     tab1, tab2, tab3, tab3b, tab4, tab5, tab6, tab7, tab8 = st.tabs([
@@ -4549,19 +4656,29 @@ if st.session_state.metrics:
             st.markdown('</div>', unsafe_allow_html=True)
 
             st.markdown(f'<div class="sh"><div class="sh-dot" style="background:{p_col}"></div><span class="sh-txt">Bảng Chi Tiết Theo {sel_p}</span></div>', unsafe_allow_html=True)
+            st.caption("💡 Bấm vào 1 con số để xem danh sách bệnh nhân tương ứng.")
+
+            def _num_link(val, kind, ky):
+                val = int(val)
+                if val <= 0:
+                    return str(val)
+                href = (f"?rpt_p={_urlq(sel_p)}&rpt_k={_urlq(str(ky))}&rpt_c={kind}#rpt-drill")
+                return f'<a class="rtbl-link" href="{href}">{val}</a>'
+
             rows_html = ""
             for _, row in stats.iterrows():
                 g_cls = "pct-g" if row["Tỷ lệ đến (%)"]>=50 else "pct-r"
                 r_cls = "pct-r" if row["Tỷ lệ vắng (%)"]>=50 else "pct-g"
+                ky = row['Kỳ']
                 rows_html += f"""<tr>
-                  <td>{row['Kỳ']}</td>
+                  <td>{ky}</td>
                   <td class="num divider-l">{int(row['Đăng ký'])}</td>
-                  <td class="num col-att divider-l">{int(row['Đến - Tái Khám'])}</td>
-                  <td class="num col-att">{int(row['Đến - Vãng Lai'])}</td>
-                  <td class="num col-abs divider-l">{int(row['Vắng - Tái Khám'])}</td>
-                  <td class="num col-abs">{int(row['Vắng - Vãng Lai'])}</td>
-                  <td class="num divider-l" style="color:#059669;font-weight:700">{int(row['Đã khám'])}</td>
-                  <td class="num" style="color:#dc2626;font-weight:700">{int(row['Vắng / Chưa'])}</td>
+                  <td class="num col-att divider-l">{_num_link(row['Đến - Tái Khám'], 'dt', ky)}</td>
+                  <td class="num col-att">{_num_link(row['Đến - Vãng Lai'], 'dv', ky)}</td>
+                  <td class="num col-abs divider-l">{_num_link(row['Vắng - Tái Khám'], 'vt', ky)}</td>
+                  <td class="num col-abs">{_num_link(row['Vắng - Vãng Lai'], 'vv', ky)}</td>
+                  <td class="num divider-l" style="color:#059669;font-weight:700">{_num_link(row['Đã khám'], 'td', ky)}</td>
+                  <td class="num" style="color:#dc2626;font-weight:700">{_num_link(row['Vắng / Chưa'], 'tv', ky)}</td>
                   <td class="{g_cls} divider-l">{row['Tỷ lệ đến (%)']}%</td>
                   <td class="{r_cls}">{row['Tỷ lệ vắng (%)']}%</td>
                 </tr>"""
