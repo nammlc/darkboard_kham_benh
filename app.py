@@ -1781,14 +1781,17 @@ def update_patient_status_batch(creds_data, sheet_id, sheet_name, updates):
     tránh bị Google giới hạn số request khi đối chiếu hàng loạt.
 
     updates: list các tuple (sheet_row, new_status, stt_hoặc_None,
-             new_source_hoặc_None). Nếu phần tử thứ 3 (stt) có giá trị,
-             dòng ghi sẽ được TRA LẠI theo khoá chính STT ngay tại thời điểm
-             ghi (an toàn hơn, xem update_patient_status) — nếu không, dùng
-             sheet_row như cũ. Nếu phần tử thứ 4 (new_source) có giá trị,
-             cột NGUỒN BỆNH NHÂN của dòng đó cũng được ghi đè cùng lúc
-             (dùng khi xác nhận bệnh nhân vãng lai/đăng ký online đã đến
-             khám — gán lại nguồn thành "BỆNH NHÂN VÃNG LAI" luôn trong
-             cùng 1 lần ghi).
+             new_source_hoặc_None). new_status có thể là None — khi đó cột
+             TRẠNG THÁI được GIỮ NGUYÊN, không ghi đè (dùng khi chỉ cần cập
+             nhật NGUỒN mà không đụng đến trạng thái, vd gán nguồn "vãng
+             lai" cho người vẫn đang "chưa khám"). Nếu phần tử thứ 3 (stt)
+             có giá trị, dòng ghi sẽ được TRA LẠI theo khoá chính STT ngay
+             tại thời điểm ghi (an toàn hơn, xem update_patient_status) —
+             nếu không, dùng sheet_row như cũ. Nếu phần tử thứ 4
+             (new_source) có giá trị, cột NGUỒN BỆNH NHÂN của dòng đó cũng
+             được ghi đè cùng lúc (dùng khi xác nhận bệnh nhân vãng
+             lai/đăng ký online đã đến khám — gán lại nguồn thành "BỆNH
+             NHÂN VÃNG LAI" luôn trong cùng 1 lần ghi).
     Trả về (số dòng đã cập nhật, lỗi | None).
     """
     if not updates:
@@ -1819,7 +1822,8 @@ def update_patient_status_batch(creds_data, sheet_id, sheet_name, updates):
                 if err:
                     return len(body), err
                 sheet_row = resolved_row
-            body.append({"range": f"{col_letter}{sheet_row}", "values": [[new_status]]})
+            if new_status is not None:
+                body.append({"range": f"{col_letter}{sheet_row}", "values": [[new_status]]})
             if new_source is not None and src_col_letter is not None:
                 body.append({"range": f"{src_col_letter}{sheet_row}", "values": [[new_source]]})
         ws.batch_update(body, value_input_option="USER_ENTERED")
@@ -5241,6 +5245,30 @@ if st.session_state.metrics:
                                  disabled=(len(sheet_patients) == 0)):
                         with st.spinner("Đang đối chiếu…"):
                             results = reconcile_attendance(sheet_patients, visit_records, today=today)
+
+                        # Tự động gắn TRẠNG THÁI + NGUỒN ngay khi đối chiếu xong cho
+                        # bệnh nhân vãng lai (nguồn đang trống) được xác định là
+                        # CHƯA đến khám — không cần thêm bước xác nhận riêng, vì lượt
+                        # đối chiếu này chính là bước xác nhận.
+                        auto_tag = [
+                            r for r in results
+                            if r["status"] == "not_attended" and _blank_source(r.get("source"))
+                        ]
+                        if auto_tag and creds_data:
+                            with st.spinner(f"Đang gán nguồn/trạng thái cho {len(auto_tag)} bệnh nhân vãng lai chưa khám…"):
+                                n_auto, err_auto = update_patient_status_batch(
+                                    creds_data, SHEET_ID, SHEET_NAME,
+                                    [(r["sheet_row"], STATUS_NOT_ATTENDED, r.get("stt") or None,
+                                      "BỆNH NHÂN VÃNG LAI") for r in auto_tag]
+                                )
+                            if err_auto:
+                                st.warning(f"⚠️ Không tự gán được nguồn/trạng thái cho bệnh nhân vãng lai chưa khám: {err_auto}")
+                            else:
+                                for r in auto_tag:
+                                    r["source"] = "BỆNH NHÂN VÃNG LAI"
+                                st.session_state["rec_auto_tagged"] = n_auto
+                                st.session_state.metrics = None
+
                         st.session_state["rec_results"] = results
                         st.session_state["rec_sheet_patients"] = sheet_patients
 
@@ -5257,6 +5285,12 @@ if st.session_state.metrics:
                             + (f" · **{len(sot_list_all)}** ca nghi bị sót (tên giống nhưng ngoài cửa sổ ngày)."
                                if sot_list_all else ".")
                         )
+                        if st.session_state.get("rec_auto_tagged"):
+                            st.caption(
+                                f"🏷️ Đã tự động gán NGUỒN = \"BỆNH NHÂN VÃNG LAI\" và TRẠNG THÁI "
+                                f"\"chưa khám\" cho **{st.session_state['rec_auto_tagged']}** bệnh nhân "
+                                f"đăng ký online chưa đến khám (làm ngay khi đối chiếu, không cần xác nhận thêm)."
+                            )
 
                         # ── Tách kết quả theo LOẠI BỆNH NHÂN: Tái khám (từ khoa) / Vãng lai ──
                         results_tk = [r for r in results if _patient_kind(r.get("source")) == "tai_kham"]
